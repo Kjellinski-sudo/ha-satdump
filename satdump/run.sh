@@ -84,10 +84,14 @@ report_status() {
         ende: ($t.next_los_time | floor | todate),
         elevation_jetzt: ($t.sat_current_pos.el * 10 | round / 10)
       } } end' | { read -r b && ha_state sensor.satdump_naechster_ueberflug "$b"; }
-  echo "$api" | jq -c '(.live_pipeline // {}) as $p | ((.object_tracker.next_event_is_aos | not) and ((.object_tracker.next_aos_time // 0) > 0)) as $on | {
-      state: (if $on then "Empfang" else "Warten" end),
+  # "Empfang" nur, wenn SatDump wirklich aufnimmt (Live-Pipeline läuft) oder der Satellit über der Mindesthöhe steht;
+  # Überflüge unter der Mindesthöhe nimmt SatDump gar nicht auf -> "Zu flach"
+  echo "$api" | jq -c --argjson minel "$MINEL" '(.live_pipeline // {}) as $p | ((.object_tracker.next_event_is_aos | not) and ((.object_tracker.next_aos_time // 0) > 0)) as $pass
+    | (($p | length) > 0 or ((.object_tracker.sat_current_pos.el // -90) >= $minel)) as $rec | ($pass and $rec) as $on | {
+      state: (if $on then "Empfang" elif $pass then "Zu flach" else "Warten" end),
       attributes: {
         friendly_name: "SatDump Status", icon: (if $on then "mdi:satellite-uplink" else "mdi:satellite-variant" end),
+        mindesthoehe: $minel,
         snr: (($p.psk_demod.snr // 0) * 10 | round / 10),
         snr_spitze: (($p.psk_demod.peak_snr // 0) * 10 | round / 10),
         synchron: ($p.ccsds_conv_concat_decoder.deframer_lock // false)
