@@ -1,5 +1,5 @@
 name: SatDump Wettersatelliten
-version: "0.2.1"
+version: "0.2.2"
 slug: satdump
 description: Empfängt Wetterbilder der Meteor-M-Satelliten (LRPT, 137,9 MHz) mit einem RTL-SDR-Stick und legt sie unter /media/satdump ab.
 url: https://github.com/Kjellinski-sudo/ha-satdump
@@ -23,7 +23,7 @@ options:
   longitude: 0.0
   altitude: 0
   gain: 30.0
-  min_elevation: 15
+  min_elevation: 25
   keep_days: 14
 schema:
   latitude: float(-90,90)

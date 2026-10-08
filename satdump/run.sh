@@ -133,4 +133,5 @@ report_status() {
 ) &
 
 cd /data
-exec satdump autotrack "$CFG"
+# Harmlose Meldung "Could not connect to Rotcld" (kein Antennenrotor vorhanden) aus dem Protokoll filtern
+exec satdump autotrack "$CFG" > >(grep --line-buffered -v "Rotcld") 2>&1
