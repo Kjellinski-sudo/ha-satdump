@@ -1,7 +1,7 @@
 FROM debian:trixie-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends satdump jq ca-certificates findutils \
+    && apt-get install -y --no-install-recommends satdump jq curl ca-certificates findutils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY run.sh /run.sh
