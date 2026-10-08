@@ -43,6 +43,20 @@ jq -n \
   ]
 }' > "$CFG"
 
+# SatDump-Einstellungen + Bahndaten (TLE) dauerhaft in /data, damit ein Neustart ohne Internet/CelesTrak-Limit klappt
+mkdir -p /data/satdump-config /root/.config
+[ -L /root/.config/satdump ] || { rm -rf /root/.config/satdump; ln -s /data/satdump-config /root/.config/satdump; }
+TLES=/data/satdump-config/satdump_tles.txt
+if ! grep -q "^1 57166" "$TLES" 2>/dev/null || ! grep -q "^1 59051" "$TLES" 2>/dev/null; then
+  : > "$TLES.tmp"
+  for n in 57166 59051; do
+    t=$(curl -s -m 20 "https://celestrak.org/NORAD/elements/gp.php?CATNR=$n&FORMAT=tle" | tr -d '\r')
+    if echo "$t" | grep -q "^1 $n"; then echo "$t" >> "$TLES.tmp"; echo "[satdump] Bahndaten für $n geladen"
+    else echo "[satdump] Bahndaten für $n nicht ladbar (CelesTrak)"; fi
+  done
+  [ -s "$TLES.tmp" ] && mv -f "$TLES.tmp" "$TLES" || rm -f "$TLES.tmp"
+fi
+
 # Platzhalter, damit die Kamera-Entitäten (local_file) schon vor dem ersten Bild existieren
 PLACEHOLDER='iVBORw0KGgoAAAANSUhEUgAAABAAAAAJCAIAAAC0SDtlAAAAFElEQVR4nGPgFZEhCTGMahAZDBoAiOQiUQezVScAAAAASUVORK5CYII='
 for f in latest.png latest_ir.png gallery_1.png gallery_2.png gallery_3.png gallery_4.png gallery_5.png gallery_6.png; do
@@ -60,15 +74,17 @@ ha_state() {  # $1=entity_id  $2=JSON-Body
 report_status() {
   api=$(curl -s -m 5 http://127.0.0.1:8081/api) || return 0
   [ -n "$api" ] || return 0
-  echo "$api" | jq -c '.object_tracker as $t | {
+  echo "$api" | jq -c '.object_tracker as $t | if (($t.object_name // "None") == "None") or (($t.next_aos_time // 0) <= 0) then {
+      state: "unknown", attributes: { friendly_name: "SatDump nächster Überflug", device_class: "timestamp",
+        icon: "mdi:satellite-variant", satellit: null, laeuft_gerade: false, hinweis: "keine Bahndaten" } } else {
       state: ($t.next_aos_time | floor | todate),
       attributes: {
         friendly_name: "SatDump nächster Überflug", device_class: "timestamp", icon: "mdi:satellite-variant",
         satellit: $t.object_name, laeuft_gerade: ($t.next_event_is_aos | not),
         ende: ($t.next_los_time | floor | todate),
         elevation_jetzt: ($t.sat_current_pos.el * 10 | round / 10)
-      } }' | { read -r b && ha_state sensor.satdump_naechster_ueberflug "$b"; }
-  echo "$api" | jq -c '(.live_pipeline // {}) as $p | (.object_tracker.next_event_is_aos | not) as $on | {
+      } } end' | { read -r b && ha_state sensor.satdump_naechster_ueberflug "$b"; }
+  echo "$api" | jq -c '(.live_pipeline // {}) as $p | ((.object_tracker.next_event_is_aos | not) and ((.object_tracker.next_aos_time // 0) > 0)) as $on | {
       state: (if $on then "Empfang" else "Warten" end),
       attributes: {
         friendly_name: "SatDump Status", icon: (if $on then "mdi:satellite-uplink" else "mdi:satellite-variant" end),
