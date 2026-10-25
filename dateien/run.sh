@@ -10,6 +10,9 @@ CONF=/tmp/fbq-config.yaml
 LABEL=$(jq -r '.stick_label' "$OPT")
 USER_NAME=$(jq -r '.username' "$OPT")
 USER_PW=$(jq -r '.password' "$OPT")
+PUSH_DIENST=$(jq -r '.push_dienst // "mobile_app_kjells_apfel"' "$OPT")
+# Zufallspasswörter per Push erst, wenn HA Dienstaufrufe nicht mehr in der Datenbank speichert
+PW_PUSH=$(jq -r '.passwort_per_push // false' "$OPT")
 
 if [ -z "$USER_NAME" ] || [ "${#USER_PW}" -lt 12 ]; then
     echo "[dateien] Bitte zuerst in der App-Konfiguration einen Benutzernamen und ein Passwort (mindestens 12 Zeichen) eintragen."
@@ -110,7 +113,10 @@ ha_post() {
     curl -s -m 10 -o /dev/null -X POST -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}" \
         -H "Content-Type: application/json" -d "$2" "$HA/$1"
 }
+. /gaeste.sh
+
 belegung() {
+    sleep 20   # Quantum erst starten lassen
     while true; do
         read -r total used avail <<<"$(df -B1 --output=size,used,avail "$MNT" | tail -1)"
         if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then
@@ -119,6 +125,9 @@ belegung() {
                 attributes: {unit_of_measurement: "%", friendly_name: "Dateien: Stick belegt", icon: "mdi:usb-flash-drive",
                     belegt_gb: (($u / 1e8 | floor) / 10), frei_gb: (($a / 1e8 | floor) / 10), gesamt_gb: (($t / 1e8 | floor) / 10)}}')"
         fi
+        ordner_melden
+        gaeste_ablauf_pruefen
+        gaeste_melden
         sleep 300
     done
 }
@@ -134,8 +143,12 @@ watch_log() {
         echo "$line"
         case "$line" in
             POST*"| 200 |"*'"/api/auth/login'*)
-                ha_post events/dateien_anmeldung "$(jq -n --arg b "$(benutzer_aus "$line")" '{benutzer: $b}')" ;;
-            POST*"| 401 |"*'"/api/auth/login'*|POST*"| 403 |"*'"/api/auth/login'*|POST*"| 429 |"*'"/api/auth/login'*)
+                ha_post events/dateien_anmeldung "$(jq -n --arg b "$(benutzer_aus "$line")" '{benutzer: $b}')"
+                gast_anmeldung_pruefen "$(benutzer_aus "$line")" ;;
+            POST*"| 403 |"*'"/api/auth/login'*)
+                # richtiges Einmal-Passwort, Gast muss jetzt ein eigenes festlegen
+                gast_anmeldung_pruefen "$(benutzer_aus "$line")" ;;
+            POST*"| 401 |"*'"/api/auth/login'*|POST*"| 429 |"*'"/api/auth/login'*)
                 ha_post events/dateien_login_fehlgeschlagen "$(jq -n --arg b "$(benutzer_aus "$line")" '{benutzer: $b}')" ;;
         esac
     done
@@ -143,5 +156,14 @@ watch_log() {
 
 filebrowser -c "$CONF" > >(watch_log) 2>&1 &
 FB_PID=$!
+
+# Befehle aus Home Assistant (Gäste anlegen/löschen), eine JSON-Zeile je Befehl
+while kill -0 "$FB_PID" 2>/dev/null; do
+    if read -r -t 5 zeile; then
+        befehl_ausfuehren "$zeile"
+    elif [ $? -le 128 ]; then
+        sleep 5   # stdin zu (kein Home Assistant angebunden)
+    fi
+done
 wait "$FB_PID"
 kill "$BEL_PID" 2>/dev/null

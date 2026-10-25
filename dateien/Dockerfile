@@ -24,7 +24,7 @@ RUN apt-get update \
 COPY neon.css logo.svg /opt/dateien/
 RUN rsvg-convert -w 512 -h 512 -b "#070b12" /opt/dateien/logo.svg -o /opt/dateien/logo.png
 
-COPY run.sh /run.sh
-RUN chmod +x /run.sh
+COPY run.sh gaeste.sh /
+RUN chmod +x /run.sh /gaeste.sh
 
 CMD ["/run.sh"]
