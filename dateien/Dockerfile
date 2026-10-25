@@ -8,7 +8,7 @@ ARG FBQ_SHA_ARM64=03eac074efc1b0ef3cb39882c04eeee26027049d261b6b6706650d4ac2d8e2
 ARG FBQ_SHA_AMD64=5710dc6f51d77f1db884eace44f6952286c49f2ce40b6a59af37e0dc7c4a8bbd
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl jq mount util-linux librsvg2-bin \
+    && apt-get install -y --no-install-recommends ca-certificates curl jq mount util-linux librsvg2-bin sqlite3 \
     && rm -rf /var/lib/apt/lists/* \
     && case "${BUILD_ARCH}" in \
          aarch64) FBQ_ARCH=arm64; FBQ_SHA="${FBQ_SHA_ARM64}" ;; \
@@ -24,7 +24,7 @@ RUN apt-get update \
 COPY neon.css logo.svg /opt/dateien/
 RUN rsvg-convert -w 512 -h 512 -b "#070b12" /opt/dateien/logo.svg -o /opt/dateien/logo.png
 
-COPY run.sh gaeste.sh /
-RUN chmod +x /run.sh /gaeste.sh
+COPY run.sh gaeste.sh aktivitaet.sh /
+RUN chmod +x /run.sh /gaeste.sh /aktivitaet.sh
 
 CMD ["/run.sh"]

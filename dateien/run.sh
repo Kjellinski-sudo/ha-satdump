@@ -37,7 +37,7 @@ fi
 echo "[dateien] Stick eingebunden: $DEV -> $MNT"
 
 cleanup() {
-    kill "${BEL_PID:-0}" 2>/dev/null
+    kill "${BEL_PID:-0}" "${LOG_PID:-0}" 2>/dev/null
     kill "${FB_PID:-0}" 2>/dev/null
     wait "${FB_PID:-0}" 2>/dev/null
     sync
@@ -114,6 +114,7 @@ ha_post() {
         -H "Content-Type: application/json" -d "$2" "$HA/$1"
 }
 . /gaeste.sh
+. /aktivitaet.sh
 
 belegung() {
     sleep 20   # Quantum erst starten lassen
@@ -128,11 +129,24 @@ belegung() {
         ordner_melden
         gaeste_ablauf_pruefen
         gaeste_melden
+        papierkorb_pruefen
+        woche_melden
         sleep 300
     done
 }
 belegung &
 BEL_PID=$!
+
+# Logbuch: Aktivitätsprotokoll von Quantum alle 20 s nach neuen Einträgen durchsehen
+logbuch_schleife() {
+    sleep 30
+    while true; do
+        aktivitaet_pruefen
+        sleep 20
+    done
+}
+logbuch_schleife &
+LOG_PID=$!
 
 # Quantum schreibt jede Anfrage als Zeile: METHODE | STATUS | IP | BENUTZER | DAUER | "PFAD"
 benutzer_aus() {
@@ -149,7 +163,9 @@ watch_log() {
                 # richtiges Einmal-Passwort, Gast muss jetzt ein eigenes festlegen
                 gast_anmeldung_pruefen "$(benutzer_aus "$line")" ;;
             POST*"| 401 |"*'"/api/auth/login'*|POST*"| 429 |"*'"/api/auth/login'*)
-                ha_post events/dateien_login_fehlgeschlagen "$(jq -n --arg b "$(benutzer_aus "$line")" '{benutzer: $b}')" ;;
+                ha_post events/dateien_login_fehlgeschlagen "$(jq -n --arg b "$(benutzer_aus "$line")" '{benutzer: $b}')"
+                logbuch "Falsches Passwort für „$(benutzer_aus "$line")“"
+                woche_zaehlen fehlversuche ;;
         esac
     done
 }
@@ -166,4 +182,4 @@ while kill -0 "$FB_PID" 2>/dev/null; do
     fi
 done
 wait "$FB_PID"
-kill "$BEL_PID" 2>/dev/null
+kill "$BEL_PID" "$LOG_PID" 2>/dev/null

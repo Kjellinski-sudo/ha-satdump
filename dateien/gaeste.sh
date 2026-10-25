@@ -130,6 +130,7 @@ gast_anlegen() {
     gaeste_melden
     ordner_melden
     echo "[dateien] Gast „$benutzer“ angelegt ($recht, ${ordner:-ganzer Stick}, $tage Tage)."
+    logbuch "Gast $name ($benutzer) angelegt: $recht, Ordner ${ordner:-ganzer Stick}, $([ "$tage" -gt 0 ] && echo "$tage Tage" || echo unbegrenzt)"
 
     case "$recht" in
         ansehen) hinweis="nur ansehen und herunterladen" ;;
@@ -182,6 +183,7 @@ gast_entfernen() {
     ) 9>"$LOCK"
     gaeste_melden
     echo "[dateien] Gast „$benutzer“ entfernt ($grund)."
+    logbuch "Gast $name ($benutzer) $([ "$grund" = abgelaufen ] && echo "abgelaufen und gelöscht" || echo gelöscht)"
     local was="gelöscht"; [ "$grund" = abgelaufen ] && was="ist abgelaufen und wurde gelöscht"
     local cf="Bitte die E-Mail des Gastes bei Cloudflare aus der Regel „Gäste“ entfernen."
     [ -n "$email" ] && cf="Bitte $email bei Cloudflare aus der Regel „Gäste“ entfernen."
@@ -209,6 +211,7 @@ gast_anmeldung_pruefen() {
             "$GAESTE" > "$GAESTE.neu" && mv "$GAESTE.neu" "$GAESTE"
     ) 9>"$LOCK"
     gaeste_melden
+    logbuch "Gast $(jq -r .name <<<"$eintrag") hat sich zum ersten Mal angemeldet"
     push "Dateien: Gast $(jq -r .name <<<"$eintrag") meldet sich an" "$(jq -r .name <<<"$eintrag") hat sich zum ersten Mal im Datei-Manager angemeldet."
     ha_post events/dateien_gast_erste_anmeldung "$(jq -n --arg b "$benutzer" '{benutzer: $b}')"
 }
