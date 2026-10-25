@@ -224,6 +224,40 @@ befehl_ausfuehren() {
         gast_anlegen)  gast_anlegen "$cmd" ;;
         gast_loeschen) gast_entfernen "$(benutzername "$(jq -r '.benutzer // ""' <<<"$cmd")")" geloescht ;;
         ordner)        ordner_melden; gaeste_melden ;;
+        wiederherstellen) wiederherstellen "$(jq -r '.name // ""' <<<"$cmd")" ;;
         *) echo "[dateien] Unbekannte Aktion ignoriert." ;;
     esac
+}
+
+# Papierkorb: Eintrag an seinen alten Platz zurück (fehlende Ordner werden angelegt, bei gleichem Namen „ (1)“)
+wiederherstellen() {
+    local name=$1 herkunft=/data/papierkorb_herkunft.json pfad ordner ziel stamm endung n tok code
+    case "$name" in ""|*/*|.|..) push "Dateien: nicht wiederhergestellt" "Ungültiger Name."; return ;; esac
+    if [ ! -e "$MNT/Papierkorb/$name" ]; then
+        push "Dateien: nicht wiederhergestellt" "„$name“ liegt nicht (mehr) im Papierkorb."; return
+    fi
+    pfad=$(jq -r --arg n "$name" '.[$n].pfad // empty' "$herkunft" 2>/dev/null)
+    [ -n "$pfad" ] || pfad="/$name"   # Herkunft unbekannt (z. B. von Hand hineingelegt): oberste Ebene
+    ordner=$(dirname "$pfad"); [ "$ordner" = "." ] && ordner=/
+    case "$ordner" in *..*) push "Dateien: nicht wiederhergestellt" "Ungültiger Zielordner."; return ;; esac
+    mkdir -p "$MNT$ordner"
+    ziel=$(basename "$pfad")
+    if [ -e "$MNT$ordner/$ziel" ]; then
+        stamm=${ziel%.*}; endung=${ziel#"$stamm"}; [ "$stamm" = "" ] && { stamm=$ziel; endung=""; }
+        n=1; while [ -e "$MNT$ordner/$stamm ($n)$endung" ]; do n=$((n + 1)); done
+        ziel="$stamm ($n)$endung"
+    fi
+    tok=$(admin_token)
+    code=$(fb_api "$tok" PATCH /api/resources "$(jq -n --arg f "/Papierkorb/$name" --arg t "${ordner%/}/$ziel" \
+        '{action: "move", rename: false, overwrite: false, items: [{fromSource: "Stick", fromPath: $f, toSource: "Stick", toPath: $t}]}')")
+    if [ "$code" != 200 ] && [ "$code" != 204 ] || jq -e '(.failed // []) | length > 0' /tmp/fb_api.out >/dev/null 2>&1; then
+        echo "[dateien] Wiederherstellen fehlgeschlagen (HTTP $code)."
+        push "Dateien: nicht wiederhergestellt" "„$name“ konnte nicht zurückgelegt werden (Fehler $code)."; return
+    fi
+    (
+        flock 9
+        jq --arg n "$name" 'del(.[$n])' "$herkunft" > "$herkunft.neu" 2>/dev/null && mv "$herkunft.neu" "$herkunft"
+    ) 9>"$LOCK"
+    logbuch "„$name“ aus dem Papierkorb wiederhergestellt nach „${ordner%/}/$ziel“"
+    papierkorb_pruefen
 }

@@ -82,6 +82,7 @@ aktivitaet_pruefen() {
         echo "$id" > "$LETZTE_ID"
     done < <(jq -c '.[]' <<<"$zeilen")
     woche_melden
+    papierkorb_pruefen   # Liste im Dashboard gleich aktualisieren
     # Gäste, die etwas hochgeladen haben: eine Push je Durchlauf (nicht im Silent-Modus)
     local b name
     for b in "${!gast_hoch[@]}"; do
@@ -110,7 +111,15 @@ papierkorb_pruefen() {
     done < <(jq -r --argjson g $((jetzt - PAPIERKORB_TAGE * 86400)) 'to_entries[] | select(.value <= $g) | .key' "$PAPIERKORB_LISTE")
     jq --argjson g $((jetzt - PAPIERKORB_TAGE * 86400)) 'with_entries(select(.value > $g))' "$PAPIERKORB_LISTE" \
         > "$PAPIERKORB_LISTE.neu" && mv "$PAPIERKORB_LISTE.neu" "$PAPIERKORB_LISTE"
-    ha_post states/sensor.dateien_papierkorb "$(jq --argjson j "$jetzt" --argjson t "$PAPIERKORB_TAGE" '{state: length, attributes: {
+    # Herkunft (von der Papierkorb-Weiche gemerkt) auf vorhandene Einträge kürzen
+    local herkunft=/data/papierkorb_herkunft.json
+    [ -f "$herkunft" ] || echo '{}' > "$herkunft"
+    (
+        flock 9
+        jq --argjson e "$eintraege" 'with_entries(select(.key as $k | $e | index($k)))' "$herkunft" > "$herkunft.neu" && mv "$herkunft.neu" "$herkunft"
+    ) 9>"$LOCK"
+    ha_post states/sensor.dateien_papierkorb "$(jq --argjson j "$jetzt" --argjson t "$PAPIERKORB_TAGE" --slurpfile h "$herkunft" '{state: length, attributes: {
         friendly_name: "Dateien: Papierkorb", icon: "mdi:delete-clock", unit_of_measurement: "Einträge",
-        eintraege: [to_entries[] | {name: .key, loeschen_am: ((.value + $t * 86400) | strftime("%Y-%m-%dT%H:%M:%SZ"))}]}}' "$PAPIERKORB_LISTE")"
+        eintraege: [to_entries[] | {name: .key, herkunft: ($h[0][.key].pfad // null),
+                    loeschen_am: ((.value + $t * 86400) | strftime("%Y-%m-%dT%H:%M:%SZ"))}]}}' "$PAPIERKORB_LISTE")"
 }

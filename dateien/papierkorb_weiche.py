@@ -8,6 +8,13 @@ Schlägt das Verschieben fehl, wird NICHT gelöscht, der Eintrag kommt als "fail
 """
 import http.client
 import json
+import os
+import time
+
+try:
+    import fcntl
+except ImportError:  # nur zum Testen unter Windows
+    fcntl = None
 import posixpath
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,7 +24,35 @@ QUANTUM_HOST = "127.0.0.1"
 QUANTUM_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8081
 LISTEN_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8082
 KORB = "/Papierkorb"
+STICK = os.environ.get("DATEIEN_STICK", "/mnt/stick")
+HERKUNFT = os.environ.get("DATEIEN_HERKUNFT", "/data/papierkorb_herkunft.json")
+SPERRE = os.environ.get("DATEIEN_SPERRE", "/tmp/gaeste.lock")
 WEITERGEBEN = ("Authorization", "Cookie", "X-Forwarded-For", "X-Real-IP", "X-Forwarded-Proto", "X-Forwarded-Host", "User-Agent")
+
+
+def freier_name(name):
+    """Name im Papierkorb, der noch nicht vergeben ist: „bild.jpg“, „bild (1).jpg“, …"""
+    stamm, endung = os.path.splitext(name) if not name.startswith(".") else (name, "")
+    kandidat, n = name, 0
+    while os.path.lexists(os.path.join(STICK, KORB.strip("/"), kandidat)):
+        n += 1
+        kandidat = f"{stamm} ({n}){endung}"
+    return kandidat
+
+
+def herkunft_merken(name_im_korb, pfad):
+    with open(SPERRE, "a") as sperre:
+        if fcntl:
+            fcntl.flock(sperre, fcntl.LOCK_EX)
+        try:
+            with open(HERKUNFT, encoding="utf-8") as f:
+                daten = json.load(f)
+        except (OSError, ValueError):
+            daten = {}
+        daten[name_im_korb] = {"pfad": "/" + pfad.strip("/"), "zeit": int(time.time())}
+        with open(HERKUNFT + ".neu", "w", encoding="utf-8") as f:
+            json.dump(daten, f, ensure_ascii=False)
+        os.replace(HERKUNFT + ".neu", HERKUNFT)
 
 
 def im_korb(pfad):
@@ -56,8 +91,8 @@ class Weiche(BaseHTTPRequestHandler):
         """eintraege: [(source, path)] -> (succeeded, failed) im Format von BulkDeleteResponse"""
         ok, fehler = [], []
         for source, pfad in eintraege:
-            name = posixpath.basename(pfad.rstrip("/")) or "unbenannt"
-            anfrage = {"action": "move", "rename": True, "overwrite": False, "items": [
+            name = freier_name(posixpath.basename(pfad.rstrip("/")) or "unbenannt")
+            anfrage = {"action": "move", "rename": False, "overwrite": False, "items": [
                 {"fromSource": source, "fromPath": pfad, "toSource": source, "toPath": f"{KORB}/{name}"}]}
             status, antwort, _ = self._quantum("PATCH", "/api/resources", json.dumps(anfrage).encode())
             if status in (200, 204):
@@ -69,6 +104,10 @@ class Weiche(BaseHTTPRequestHandler):
                     fehler.append({"source": source, "path": pfad, "message": "Verschieben in den Papierkorb fehlgeschlagen"})
                 else:
                     ok.append({"source": source, "path": pfad, "message": "in den Papierkorb verschoben"})
+                    try:
+                        herkunft_merken(name, pfad)
+                    except OSError:
+                        pass
             else:
                 fehler.append({"source": source, "path": pfad, "message": f"Verschieben in den Papierkorb nicht erlaubt ({status})"})
         return ok, fehler
