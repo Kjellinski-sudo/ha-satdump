@@ -156,13 +156,13 @@ watch_log() {
     while IFS= read -r line; do
         echo "$line"
         case "$line" in
-            POST*"| 200 |"*'"/api/auth/login'*)
+            *"POST "*"| 200 |"*'"/api/auth/login'*)
                 ha_post events/dateien_anmeldung "$(jq -n --arg b "$(benutzer_aus "$line")" '{benutzer: $b}')"
                 gast_anmeldung_pruefen "$(benutzer_aus "$line")" ;;
-            POST*"| 403 |"*'"/api/auth/login'*)
+            *"POST "*"| 403 |"*'"/api/auth/login'*)
                 # richtiges Einmal-Passwort, Gast muss jetzt ein eigenes festlegen
                 gast_anmeldung_pruefen "$(benutzer_aus "$line")" ;;
-            POST*"| 401 |"*'"/api/auth/login'*|POST*"| 429 |"*'"/api/auth/login'*)
+            *"POST "*"| 401 |"*'"/api/auth/login'*|*"POST "*"| 429 |"*'"/api/auth/login'*)
                 ha_post events/dateien_login_fehlgeschlagen "$(jq -n --arg b "$(benutzer_aus "$line")" '{benutzer: $b}')"
                 logbuch "Falsches Passwort für „$(benutzer_aus "$line")“"
                 woche_zaehlen fehlversuche ;;
