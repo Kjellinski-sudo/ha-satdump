@@ -12,10 +12,12 @@ silent_an() {
     curl -s -m 5 -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}" "$HA/states/input_boolean.silent_modus" | jq -e '.state == "on"' >/dev/null 2>&1
 }
 
+# Jede Aktion wird ein neuer Zustand von sensor.dateien_letzte_aktion (mit Uhrzeit, damit auch
+# gleiche Aktionen nacheinander einzeln und nicht doppelt im HA-Logbuch erscheinen)
 logbuch() {
-    ha_post services/logbook/log "$(jq -n --arg m "$1" '{name: "Dateien", message: $m, entity_id: "sensor.dateien_letzte_aktion"}')"
-    ha_post states/sensor.dateien_letzte_aktion "$(jq -n --arg m "${1:0:250}" --arg z "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{state: $m, attributes: {friendly_name: "Dateien: letzte Aktion", icon: "mdi:history", zeit: $z}}')"
+    ha_post states/sensor.dateien_letzte_aktion "$(jq -n --arg m "${1:0:230}" --arg z "$(TZ=Europe/Berlin date +%H:%M:%S)" \
+        --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{state: ($z + " · " + $m), attributes: {friendly_name: "Dateien", icon: "mdi:history", zeit: $t}}')"
 }
 
 # Zähler der laufenden Kalenderwoche (Montag–Sonntag)
