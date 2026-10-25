@@ -1,5 +1,5 @@
 name: Dateien (File Browser)
-version: "0.1.0"
+version: "0.1.1"
 slug: dateien
 description: Kleiner Datei-Manager nur für den USB-Stick. Kein Zugriff auf Home Assistant, erreichbar über den Cloudflare-Tunnel (dateien.kjellh.de).
 url: https://github.com/Kjellinski-sudo/ha-satdump
@@ -14,6 +14,8 @@ init: false
 privileged:
   - SYS_ADMIN
 apparmor: false
+# Meldet Stick-Belegung und fehlgeschlagene Anmeldungen an Home Assistant (v0.1.1)
+homeassistant_api: true
 devices:
   - /dev/sda1
 options:
