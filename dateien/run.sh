@@ -1,11 +1,11 @@
 #!/bin/bash
-# Datei-Manager (File Browser) nur für den USB-Stick. Benutzer und Passwort kommen aus der
+# Datei-Manager (FileBrowser Quantum) nur für den USB-Stick. Benutzer und Passwort kommen aus der
 # App-Konfiguration (setzt Kjell selbst) und werden nie ins Protokoll geschrieben.
 set -u
 
 OPT=/data/options.json
-DB=/data/filebrowser.db
 MNT=/mnt/stick
+CONF=/tmp/fbq-config.yaml
 
 LABEL=$(jq -r '.stick_label' "$OPT")
 USER_NAME=$(jq -r '.username' "$OPT")
@@ -43,30 +43,72 @@ cleanup() {
 }
 trap cleanup TERM INT
 
-FB="filebrowser --database $DB"
-if [ ! -f "$DB" ]; then
-    $FB config init >/dev/null
-fi
-# Nur der Stick, keine Selbstregistrierung, keine Befehle/Shell, deutsche Oberfläche
-$FB config set --root "$MNT" --address 0.0.0.0 --port 8080 --baseURL "" \
-    --signup=false --shell "" --branding.name "Dateien" --locale de \
-    --minimumPasswordLength 12 >/dev/null
+# Konfiguration bei jedem Start neu schreiben (nur im Container, nur für root lesbar).
+# Der Admin-Benutzer bekommt bei jedem Start Name und Passwort aus der App-Konfiguration.
+# JSON-Zeichenketten sind gültiges YAML, so sind Sonderzeichen im Passwort sicher.
+mkdir -p /data/quantum /tmp/fbq-cache
+umask 077
+cat > "$CONF" <<EOF
+server:
+  disableUpdateCheck: true
+  logging:
+    - levels: "info|warning|error"
+      apiLevels: "info|warning|error"
+      noColors: true
+  sources:
+    - path: "$MNT"
+      name: "Stick"
+      config:
+        defaultEnabled: true
+  cacheDir: "/tmp/fbq-cache"
+  cacheDirCleanup: true
+  database:
+    path: "/data/quantum/filebrowser.sqlite"
+    activity:
+      retentionDays: 30
+auth:
+  tokenExpirationHours: 12
+  adminUsername: $(jq -n --arg v "$USER_NAME" '$v')
+  adminPassword: $(jq -n --arg v "$USER_PW" '$v')
+  methods:
+    password:
+      enabled: true
+      minLength: 12
+      signup: false
+frontend:
+  name: "Dateien"
+  description: "Dateien auf dem USB-Stick"
+  disableDefaultLinks: true
+  externalLinks: []
+  loginIcon: "/opt/dateien/logo.svg"
+  favicon: "/opt/dateien/logo.svg"
+  loginButtonText: "Anmelden"
+  styling:
+    disableEventThemes: true
+    customCSS: "/opt/dateien/neon.css"
+    darkBackground: "#070b12"
+userDefaults:
+  ui:
+    darkMode: true
+    themeColor: "#22d3ee"
+    locale: "de"
+  account:
+    permissions:
+      share: false
+http:
+  port: 8080
+  baseURL: "/"
+  externalUrl: "https://dateien.kjellh.de"
+  trustProxyHeaders: true
+EOF
+umask 022
+echo "[dateien] FileBrowser Quantum wird gestartet (Benutzer aus der App-Konfiguration)."
 
-if $FB users ls 2>/dev/null | awk 'NR>1 {print $2}' | grep -qx "$USER_NAME"; then
-    $FB users update "$USER_NAME" --password "$USER_PW" --perm.admin --perm.execute=false --perm.share=false >/dev/null
-else
-    $FB users add "$USER_NAME" "$USER_PW" --perm.admin --perm.execute=false --perm.share=false --locale de >/dev/null
-fi
-# Andere Benutzer (z. B. Standard-Admin) entfernen: nur der eingetragene Benutzer darf rein
-for u in $($FB users ls 2>/dev/null | awk 'NR>1 {print $2}'); do
-    [ "$u" = "$USER_NAME" ] || $FB users rm "$u" >/dev/null 2>&1
-done
-echo "[dateien] Benutzer eingerichtet (Name/Passwort aus der Konfiguration)."
-
-# An Home Assistant melden (v0.1.1): Belegung des Sticks alle 5 Min., fehlgeschlagene Anmeldungen sofort
+# An Home Assistant melden: Belegung des Sticks alle 5 Min., Anmeldungen sofort
 HA=http://supervisor/core/api
 ha_post() {
-    curl -s -m 10 -o /dev/null -X POST -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}"         -H "Content-Type: application/json" -d "$2" "$HA/$1"
+    curl -s -m 10 -o /dev/null -X POST -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}" \
+        -H "Content-Type: application/json" -d "$2" "$HA/$1"
 }
 belegung() {
     while true; do
@@ -82,16 +124,24 @@ belegung() {
 }
 belegung &
 BEL_PID=$!
+
+# Quantum schreibt jede Anfrage als Zeile: METHODE | STATUS | IP | BENUTZER | DAUER | "PFAD"
+benutzer_aus() {
+    printf '%s' "$1" | sed -n 's/.*username=\([^"&]*\).*/\1/p' | head -c 64
+}
 watch_log() {
     while IFS= read -r line; do
         echo "$line"
         case "$line" in
-            *"/api/login: 403"*) ha_post events/dateien_login_fehlgeschlagen '{}' ;;
+            POST*"| 200 |"*'"/api/auth/login'*)
+                ha_post events/dateien_anmeldung "$(jq -n --arg b "$(benutzer_aus "$line")" '{benutzer: $b}')" ;;
+            POST*"| 401 |"*'"/api/auth/login'*|POST*"| 403 |"*'"/api/auth/login'*|POST*"| 429 |"*'"/api/auth/login'*)
+                ha_post events/dateien_login_fehlgeschlagen "$(jq -n --arg b "$(benutzer_aus "$line")" '{benutzer: $b}')" ;;
         esac
     done
 }
 
-$FB > >(watch_log) 2>&1 &
+filebrowser -c "$CONF" > >(watch_log) 2>&1 &
 FB_PID=$!
 wait "$FB_PID"
 kill "$BEL_PID" 2>/dev/null

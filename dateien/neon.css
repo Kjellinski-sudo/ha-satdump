@@ -1,0 +1,162 @@
+/* „Dateien“ – Neon-Design passend zum SecuriPi-Panel (dunkel, Cyan/Violett, weiche Glas-Karten) */
+.dark-mode {
+  --background: #070b12;
+  --alt-background: #121a26;
+  --surfacePrimary: rgba(20, 30, 44, 0.72);
+  --surfaceSecondary: rgba(34, 48, 66, 0.85);
+  --divider: rgba(34, 211, 238, 0.14);
+  --textPrimary: #e6f6ff;
+  --textSecondary: #8fb3c7;
+  --iconBackground: rgba(34, 211, 238, 0.08);
+  --neon: #22d3ee;
+  --neon2: #a78bfa;
+  --glow: 0 0 0 1px rgba(34, 211, 238, 0.35), 0 0 18px rgba(34, 211, 238, 0.25);
+}
+
+html.dark-mode,
+html.dark-mode body {
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(167, 139, 250, 0.16), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(34, 211, 238, 0.14), transparent 60%),
+    #070b12 fixed;
+}
+
+/* Kopfzeile und Statusleiste: Glas mit feiner Neonkante */
+html.dark-mode header.flexbar,
+html.dark-mode #status-bar {
+  background: rgba(8, 13, 22, 0.72) !important;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+html.dark-mode header.flexbar { border-bottom: 1px solid rgba(34, 211, 238, 0.18); }
+html.dark-mode #status-bar { border-top: 1px solid rgba(34, 211, 238, 0.12); }
+
+/* Suche als leuchtende Pille */
+#search-bar-input {
+  border-radius: 999px !important;
+  border: 1px solid rgba(34, 211, 238, 0.25) !important;
+  background: rgba(15, 23, 34, 0.8) !important;
+  transition: box-shadow .2s, border-color .2s;
+}
+#search-bar-input:focus { border-color: var(--neon) !important; box-shadow: var(--glow); }
+
+/* Seitenleiste */
+html.dark-mode nav#sidebar { background: rgba(8, 13, 22, 0.55) !important; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+html.dark-mode nav#sidebar .card,
+html.dark-mode nav#sidebar .card-wrapper {
+  border-radius: 18px !important;
+  border: 1px solid rgba(34, 211, 238, 0.14);
+  background: linear-gradient(160deg, rgba(26, 38, 56, 0.85), rgba(14, 21, 32, 0.85)) !important;
+}
+
+/* Datei- und Ordnerkarten */
+html.dark-mode .listing-item {
+  border-radius: 16px !important;
+  border: 1px solid rgba(34, 211, 238, 0.12) !important;
+  background: linear-gradient(160deg, rgba(24, 36, 52, 0.85), rgba(13, 20, 30, 0.85)) !important;
+  transition: transform .15s ease, box-shadow .2s ease, border-color .2s ease;
+}
+html.dark-mode .listing-item:hover {
+  transform: translateY(-2px);
+  border-color: rgba(34, 211, 238, 0.55) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 0 16px rgba(34, 211, 238, 0.18);
+}
+html.dark-mode .listing-item[aria-selected="true"],
+html.dark-mode .listing-item.selected {
+  border-color: var(--neon2) !important;
+  box-shadow: 0 0 0 1px var(--neon2), 0 0 20px rgba(167, 139, 250, 0.3);
+}
+html.dark-mode .listing-item .name { font-weight: 600; letter-spacing: .1px; }
+html.dark-mode .listing-item-header { border-radius: 14px !important; }
+
+
+/* Knöpfe, Dialoge, Eingaben */
+html.dark-mode .button,
+html.dark-mode button.button {
+  border-radius: 12px !important;
+}
+html.dark-mode .button--flat:not(.button--grey),
+html.dark-mode input[type="submit"] {
+  background: linear-gradient(90deg, #06b6d4, #8b5cf6) !important;
+  color: #fff !important;
+  border: 0 !important;
+  box-shadow: 0 4px 18px rgba(34, 211, 238, 0.25);
+}
+html.dark-mode .card.floating,
+html.dark-mode .prompts .card {
+  border-radius: 20px !important;
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  background: rgba(12, 19, 29, 0.92) !important;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+html.dark-mode input.input,
+html.dark-mode .input {
+  border-radius: 12px !important;
+  border: 1px solid rgba(34, 211, 238, 0.2) !important;
+  background: rgba(10, 16, 25, 0.9) !important;
+}
+html.dark-mode input.input:focus { border-color: var(--neon) !important; box-shadow: var(--glow); }
+
+/* Anmeldeseite: Glas-Karte mit Neonrand und Logo-Leuchten */
+#login {
+  background:
+    radial-gradient(700px 400px at 70% 10%, rgba(167, 139, 250, 0.22), transparent 60%),
+    radial-gradient(600px 400px at 20% 90%, rgba(34, 211, 238, 0.2), transparent 60%),
+    #070b12 !important;
+}
+#login form,
+#login .login-card {
+  border-radius: 24px !important;
+  border: 1px solid rgba(34, 211, 238, 0.28) !important;
+  background: rgba(12, 19, 29, 0.78) !important;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 40px rgba(34, 211, 238, 0.12);
+  padding: 2em 1.6em !important;
+}
+#login h1 {
+  background: linear-gradient(90deg, #22d3ee, #a78bfa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+  font-size: 1.8em !important;
+  letter-spacing: .04em;
+}
+#login img { filter: drop-shadow(0 0 14px rgba(34, 211, 238, 0.55)); }
+
+/* Fortschrittsbalken (Speicher, Upload) als Verlauf */
+html.dark-mode progress::-webkit-progress-value,
+html.dark-mode .progress > div { background: linear-gradient(90deg, #22d3ee, #a78bfa) !important; }
+
+/* Handy: größere Fingerziele, Karten über volle Breite */
+@media (max-width: 800px) {
+  html.dark-mode .listing-item { min-height: 58px; }
+  html.dark-mode .listing-item .name { font-size: 1.02rem; }
+  #search-bar-input { font-size: 16px !important; } /* verhindert Zoom auf iOS */
+  html.dark-mode .card.floating { border-radius: 22px 22px 0 0 !important; }
+}
+
+/* Dezente Scrollbalken */
+html.dark-mode ::-webkit-scrollbar { width: 10px; height: 10px; }
+html.dark-mode ::-webkit-scrollbar-thumb { background: rgba(34, 211, 238, 0.25); border-radius: 10px; }
+html.dark-mode ::-webkit-scrollbar-track { background: transparent; }
+
+/* Hauptbereich durchsichtig, damit der Farbverlauf durchscheint */
+html.dark-mode #main {
+  background:
+    radial-gradient(900px 520px at 100% 0%, rgba(167, 139, 250, 0.22), transparent 62%),
+    radial-gradient(800px 480px at 0% 100%, rgba(34, 211, 238, 0.18), transparent 62%),
+    #070b12 !important;
+  background-attachment: fixed !important;
+}
+html.dark-mode .listing-items h2 {
+  color: var(--neon) !important;
+  text-transform: uppercase;
+  letter-spacing: .16em;
+  font-size: .72rem !important;
+  text-shadow: 0 0 10px rgba(34, 211, 238, 0.45);
+}
+html.dark-mode .listing-item i.material-icons,
+html.dark-mode .listing-item .material-icons { filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.45)); }

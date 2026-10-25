@@ -1,7 +1,7 @@
-name: Dateien (File Browser)
-version: "0.1.1"
+name: Dateien (FileBrowser Quantum)
+version: "0.2.0"
 slug: dateien
-description: Kleiner Datei-Manager nur für den USB-Stick. Kein Zugriff auf Home Assistant, erreichbar über den Cloudflare-Tunnel (dateien.kjellh.de).
+description: Datei-Manager nur für den USB-Stick (FileBrowser Quantum, Neon-Design). Kein Zugriff auf Home Assistant, erreichbar über den Cloudflare-Tunnel (dateien.kjellh.de).
 url: https://github.com/Kjellinski-sudo/ha-satdump
 arch:
   - aarch64
