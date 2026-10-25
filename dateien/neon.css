@@ -31,19 +31,26 @@ html.dark-mode #status-bar {
 html.dark-mode header.flexbar { border-bottom: 1px solid rgba(34, 211, 238, 0.18); }
 html.dark-mode #status-bar { border-top: 1px solid rgba(34, 211, 238, 0.12); }
 
-/* Suche als leuchtende Pille */
-#search-bar-input {
+/* Suche als leuchtende Pille (Rahmen am Container, Eingabefeld selbst ohne eigenen Rahmen) */
+.search-bar-container {
   border-radius: 999px !important;
-  border: 1px solid rgba(34, 211, 238, 0.25) !important;
+  border: 1px solid rgba(34, 211, 238, 0.25);
   background: rgba(15, 23, 34, 0.8) !important;
   transition: box-shadow .2s, border-color .2s;
 }
-#search-bar-input:focus { border-color: var(--neon) !important; box-shadow: var(--glow); }
+.search-bar-container:focus-within { border-color: var(--neon); box-shadow: var(--glow); }
 
 /* Seitenleiste */
 html.dark-mode nav#sidebar { background: rgba(8, 13, 22, 0.55) !important; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
-html.dark-mode nav#sidebar .card,
-html.dark-mode nav#sidebar .card-wrapper {
+html.dark-mode nav#sidebar .card-wrapper,
+html.dark-mode nav#sidebar .card .inner-card {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+/* Nur die äußeren Karten bekommen Rahmen und Verlauf; innere Bereiche bleiben flach,
+   sonst liegen mehrere Rahmen übereinander (Benutzer-/Schalterzeile) */
+html.dark-mode nav#sidebar > .card {
   border-radius: 18px !important;
   border: 1px solid rgba(34, 211, 238, 0.14);
   background: linear-gradient(160deg, rgba(26, 38, 56, 0.85), rgba(14, 21, 32, 0.85)) !important;
@@ -130,11 +137,12 @@ html.dark-mode input.input:focus { border-color: var(--neon) !important; box-sha
 html.dark-mode progress::-webkit-progress-value,
 html.dark-mode .progress > div { background: linear-gradient(90deg, #22d3ee, #a78bfa) !important; }
 
-/* Handy: größere Fingerziele, Karten über volle Breite */
+/* Handy: Kopfzeile der Liste mit Abstand zwischen „Größe“ und „Zuletzt geändert“,
+   Eingabe ohne iOS-Zoom, Dialoge als Blatt von unten */
 @media (max-width: 800px) {
-  html.dark-mode .listing-item { min-height: 58px; }
-  html.dark-mode .listing-item .name { font-size: 1.02rem; }
-  #search-bar-input { font-size: 16px !important; } /* verhindert Zoom auf iOS */
+  html.dark-mode .listing-item-header p.size { margin-right: .8em; }
+  html.dark-mode .listing-item-header p.modified { white-space: nowrap; }
+  #search-bar-input { font-size: 16px !important; }
   html.dark-mode .card.floating { border-radius: 22px 22px 0 0 !important; }
 }
 
@@ -153,9 +161,6 @@ html.dark-mode #main {
 }
 html.dark-mode .listing-items h2 {
   color: var(--neon) !important;
-  text-transform: uppercase;
-  letter-spacing: .16em;
-  font-size: .72rem !important;
   text-shadow: 0 0 10px rgba(34, 211, 238, 0.45);
 }
 html.dark-mode .listing-item i.material-icons,
