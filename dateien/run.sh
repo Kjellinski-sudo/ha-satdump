@@ -38,7 +38,8 @@ echo "[dateien] Stick eingebunden: $DEV -> $MNT"
 
 cleanup() {
     kill "${BEL_PID:-0}" "${LOG_PID:-0}" 2>/dev/null
-    kill "${FB_PID:-0}" 2>/dev/null
+    kill "${FB_PID:-0}" "${WEICHE_PID:-0}" 2>/dev/null
+    nginx -c /etc/dateien-nginx.conf -s quit 2>/dev/null
     wait "${FB_PID:-0}" 2>/dev/null
     sync
     umount "$MNT" 2>/dev/null
@@ -99,7 +100,8 @@ userDefaults:
     permissions:
       share: false
 http:
-  port: 8080
+  port: 8081
+  listen: "127.0.0.1"
   baseURL: "/"
   externalUrl: "https://dateien.kjellh.de"
   trustProxyHeaders: true
@@ -169,6 +171,11 @@ watch_log() {
         esac
     done
 }
+
+# Quantum nur intern (127.0.0.1:8081); nach außen (Tunnel, Port 8080) lauscht nginx mit der Papierkorb-Weiche
+python3 -I /opt/dateien/papierkorb_weiche.py 8082 8081 &
+WEICHE_PID=$!
+nginx -c /etc/dateien-nginx.conf -g 'daemon on;' || { echo "[dateien] nginx startet nicht."; exit 1; }
 
 filebrowser -c "$CONF" > >(watch_log) 2>&1 &
 FB_PID=$!

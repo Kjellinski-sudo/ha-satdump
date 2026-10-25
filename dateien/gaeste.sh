@@ -3,7 +3,7 @@
 # Gast-Passwörter werden nur erzeugt, an Quantum übergeben und per Push an Kjell geschickt –
 # nie ins Protokoll, nie in eine Datei.
 
-FBURL=http://127.0.0.1:8080
+FBURL=http://127.0.0.1:8081
 GAESTE=/data/gaeste.json
 LOCK=/tmp/gaeste.lock
 LINK=https://dateien.kjellh.de
