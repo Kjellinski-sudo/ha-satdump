@@ -14,3 +14,11 @@ Meteor-M2-3/M2-4-Satelliten (LRPT, 137,9 MHz) empfängt. Grundlage ist
    `latest.png` (sichtbar) und `latest_ir.png` (Infrarot).
 
 Antenne: V-Dipol, 2 × ca. 53 cm, 120°, waagerecht, Nord-Süd, mit freier Sicht zum Himmel.
+
+## Dateien (File Browser)
+
+Kleiner Datei-Manager nur für den USB-Stick (Name „ESD-USB“) am Home-Assistant-Pi.
+- Offizielles [File Browser](https://github.com/filebrowser/filebrowser) v2.63.23, Download per Prüfsumme geprüft.
+- Kein offener Port: erreichbar nur über den Cloudflare-Tunnel (intern `http://1791b5d0-dateien:8080`), davor Cloudflare Access.
+- Benutzername und Passwort (mind. 12 Zeichen) in der App-Konfiguration eintragen; ohne startet die App nicht.
+- Keine Selbstregistrierung, keine Befehle/Shell, nur der eingetragene Benutzer.
