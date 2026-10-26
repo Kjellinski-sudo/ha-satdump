@@ -194,6 +194,7 @@ belegung() {
         quantum_update_pruefen
         alles_melden
         # Sticks öfter prüfen (jede Minute), damit ein abgezogener Stick schnell auffällt
+        extern_pruefen
         for _ in 1 2 3 4; do sleep 60; sticks_melden; done
         sleep 60
     done

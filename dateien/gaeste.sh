@@ -290,6 +290,8 @@ befehl_ausfuehren() {
         ordner)        ordner_melden; gaeste_melden ;;
         melden)        alles_melden ;;
         wochenbericht) wochenbericht_ablegen "$cmd" ;;
+        alarm_archiv)  alarm_archiv "$cmd" ;;
+        extern)        extern_pruefen ;;
         wiederherstellen) wiederherstellen "$(jq -r '.quelle // "Stick"' <<<"$cmd")" "$(jq -r '.name // ""' <<<"$cmd")" ;;
         *) echo "[dateien] Unbekannte Aktion ignoriert." ;;
     esac
@@ -347,4 +349,34 @@ wochenbericht_ablegen() {
     mkdir -p "$MNT/Wochenberichte"
     datei="$MNT/Wochenberichte/Wochenbericht-$kw.txt"
     printf '%s\n' "$text" > "$datei" && echo "[dateien] Wochenbericht abgelegt: Wochenberichte/Wochenbericht-$kw.txt"
+}
+
+# Alarm-Logbuch eines Monats als Textdatei auf Stick 1 (Ordner „Logbuch“), z. B. {"aktion":"alarm_archiv","monat":"2026-10"}
+# Quelle sind nur die bereinigten Einträge (input_text.logbuch_alarm) – Feuerwehr nur als Ereignis, keine Einsatzdaten.
+alarm_archiv() {
+    local monat start ende datei daten
+    monat=$(jq -r '.monat // ""' <<<"$1" | tr -cd '0-9-' | head -c 7)
+    [[ "$monat" =~ ^[0-9]{4}-[0-9]{2}$ ]] || return
+    start=$(TZ=Europe/Berlin date -d "$monat-01 00:00" -u +%Y-%m-%dT%H:%M:%SZ)
+    ende=$(TZ=Europe/Berlin date -d "$monat-01 +1 month" -u +%Y-%m-%dT%H:%M:%SZ)
+    daten=$(curl -s -m 60 -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}" \
+        "$HA/logbook/$start?entity=input_text.logbuch_alarm&end_time=$ende")
+    jq -e 'type == "array"' >/dev/null 2>&1 <<<"$daten" || { echo "[dateien] Alarm-Logbuch $monat nicht abrufbar."; return; }
+    mkdir -p "$MNT/Logbuch"
+    datei="$MNT/Logbuch/Alarm-Logbuch-$monat.txt"
+    {
+        echo "Alarm-Logbuch $monat (Home Assistant, ohne Einsatzdaten)"
+        echo "================================================"
+        jq -r '.[] | select(.message) | "\(.when | sub("\.[0-9]+"; "") | sub("\+00:00$"; "Z") | fromdateiso8601 | strflocaltime("%d.%m.%Y %H:%M"))  \(.message)"' <<<"$daten"
+        echo
+        echo "Einträge: $(jq '[.[] | select(.message)] | length' <<<"$daten")"
+    } > "$datei" && echo "[dateien] Alarm-Logbuch abgelegt: Logbuch/Alarm-Logbuch-$monat.txt"
+}
+
+# Ist kjellh.de von außen (über Cloudflare) erreichbar? Für den Feuerwehr-Strecken-Check, kein Webhook-Aufruf.
+extern_pruefen() {
+    local code
+    code=$(curl -s -m 20 -o /dev/null -w '%{http_code}' https://kjellh.de/manifest.json)
+    ha_post states/binary_sensor.kjellh_extern_erreichbar "$(jq -n --arg c "$code" --arg z "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{state: (if $c == "200" then "on" else "off" end), attributes: {friendly_name: "kjellh.de von außen erreichbar", device_class: "connectivity", http_status: $c, geprueft: $z}}')"
 }
