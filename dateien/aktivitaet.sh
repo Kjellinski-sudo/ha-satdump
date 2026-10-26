@@ -163,7 +163,7 @@ statistik() {
     ids=$(jq -r 'keys | join(",")' <<<"$geraete")
     if [ -n "$ids" ]; then
         verlauf=$(curl -s -m 120 -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}" \
-            "$HA/history/period/$start30?filter_entity_id=$ids&minimal_response&no_attributes&significant_changes_only=0")
+            "$HA/history/period/$start30?end_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)&filter_entity_id=$ids&minimal_response&no_attributes&significant_changes_only=0")
         if jq -e 'type == "array"' >/dev/null 2>&1 <<<"$verlauf"; then
             ha_post states/sensor.geraete_ausfaelle "$(jq -c --argjson g "$geraete" --argjson jetzt "$jetzt" '
                 def ts: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601;
@@ -195,7 +195,7 @@ grundlast() {
     [ -n "$ids" ] || return
     von=$(date -u -d "@$(( $(date -u +%s) - 8 * 86400 ))" +%Y-%m-%dT%H:%M:%SZ)
     verlauf=$(curl -s -m 120 -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}" \
-        "$HA/history/period/$von?filter_entity_id=$ids&minimal_response&no_attributes&significant_changes_only=0")
+        "$HA/history/period/$von?end_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)&filter_entity_id=$ids&minimal_response&no_attributes&significant_changes_only=0")
     jq -e 'type == "array"' >/dev/null 2>&1 <<<"$verlauf" || return
     ha_post states/sensor.strom_grundlast "$(jq -c --argjson s "$steck" '
         def ts: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601;
