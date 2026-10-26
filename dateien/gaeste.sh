@@ -292,6 +292,7 @@ befehl_ausfuehren() {
         wochenbericht) wochenbericht_ablegen "$cmd" ;;
         alarm_archiv)  alarm_archiv "$cmd" ;;
         extern)        extern_pruefen ;;
+        statistik)     statistik "$cmd" ;;
         wiederherstellen) wiederherstellen "$(jq -r '.quelle // "Stick"' <<<"$cmd")" "$(jq -r '.name // ""' <<<"$cmd")" ;;
         *) echo "[dateien] Unbekannte Aktion ignoriert." ;;
     esac

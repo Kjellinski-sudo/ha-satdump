@@ -151,3 +151,71 @@ quantum_update_melden() {
         state: (if $i == $n then "aktuell" else "Update verfügbar" end),
         attributes: {friendly_name: "Dateien: FileBrowser Quantum", icon: "mdi:update", installiert: $i, neueste: $n}}')"
 }
+
+# Ausfall-Statistik der überwachten Geräte (7 und 30 Tage) aus dem HA-Verlauf.
+# Befehl: {"aktion":"statistik","geraete":{"entity_id":"Name", ...},"steckdosen":{"Name":"sensor..._summe_verbraucht", ...}}
+# Ausfall = „nicht verfügbar“ (bei Echo-Konnektivität auch „aus“), nur Ausfälle ab 5 Minuten (Neustarts zählen nicht).
+statistik() {
+    local cmd=$1 jetzt start30 ids verlauf geraete
+    geraete=$(jq -c '.geraete // {}' <<<"$cmd")
+    jetzt=$(date -u +%s)
+    start30=$(date -u -d "@$((jetzt - 30 * 86400))" +%Y-%m-%dT%H:%M:%SZ)
+    ids=$(jq -r 'keys | join(",")' <<<"$geraete")
+    if [ -n "$ids" ]; then
+        verlauf=$(curl -s -m 120 -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}" \
+            "$HA/history/period/$start30?filter_entity_id=$ids&minimal_response&no_attributes&significant_changes_only=0")
+        if jq -e 'type == "array"' >/dev/null 2>&1 <<<"$verlauf"; then
+            ha_post states/sensor.geraete_ausfaelle "$(jq -c --argjson g "$geraete" --argjson jetzt "$jetzt" '
+                def ts: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601;
+                def schlecht($e): . == "unavailable" or ($e | endswith("_konnektivitat")) and . == "off";
+                [ .[] | select(length > 0) | .[0].entity_id as $e
+                  | [ .[] | {s: .state, t: (.last_changed | ts)} ] as $p
+                  | [ range(0; $p | length) | . as $i | select($p[$i].s | schlecht($e))
+                      | {von: $p[$i].t, bis: (if $i + 1 < ($p | length) then $p[$i + 1].t else $jetzt end)}
+                      | select(.bis - .von >= 300) ] as $aus
+                  | def fenster($tage): ($jetzt - $tage * 86400) as $ab
+                      | [ $aus[] | select(.bis > $ab) | {d: (.bis - ([.von, $ab] | max))} ]
+                      | {anzahl: length, minuten: ((map(.d) | add // 0) / 60 | floor)};
+                  {entity: $e, name: ($g[$e] // $e), woche: fenster(7), monat: fenster(30),
+                   jetzt_offline: ($p[-1].s | schlecht($e))} ]
+                | sort_by(-.monat.minuten) as $l
+                | {state: ([$l[] | select(.woche.anzahl > 0)] | length),
+                   attributes: {friendly_name: "Geräte mit Ausfällen (7 Tage)", icon: "mdi:lan-disconnect",
+                                unit_of_measurement: "Geräte", geraete: $l,
+                                stand: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}}' <<<"$verlauf")"
+        fi
+    fi
+    grundlast "$(jq -c '.steckdosen // {}' <<<"$cmd")"
+}
+
+# Nächtliche Grundlast je Steckdose: Mittel der Leistung 2–5 Uhr aus dem Zählerstand (kWh), letzte Nacht und 7 Nächte
+grundlast() {
+    local steck=$1 ids von verlauf
+    ids=$(jq -r '[.[]] | join(",")' <<<"$steck")
+    [ -n "$ids" ] || return
+    von=$(date -u -d "@$(( $(date -u +%s) - 8 * 86400 ))" +%Y-%m-%dT%H:%M:%SZ)
+    verlauf=$(curl -s -m 120 -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}" \
+        "$HA/history/period/$von?filter_entity_id=$ids&minimal_response&no_attributes&significant_changes_only=0")
+    jq -e 'type == "array"' >/dev/null 2>&1 <<<"$verlauf" || return
+    ha_post states/sensor.strom_grundlast "$(jq -c --argjson s "$steck" '
+        def ts: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601;
+        # Zählerstand zum Zeitpunkt t = letzter bekannter Wert davor
+        def wert($p; $t): ([ $p[] | select(.t <= $t) ] | last | .v) // null;
+        ($s | to_entries | map({key: .value, value: .key}) | from_entries) as $name
+        | [ .[] | select(length > 0) | .[0].entity_id as $e
+            | [ .[] | select(.state | test("^[0-9.]+$")) | {v: (.state | tonumber), t: (.last_changed | ts)} ] as $p
+            | [ range(1; 9) as $tag
+                | ((now | strftime("%Y-%m-%d") | strptime("%Y-%m-%d") | mktime) - ($tag - 1) * 86400) as $mitternacht
+                # 2–5 Uhr Ortszeit (Winterzeit UTC+1): 01:00–04:00 UTC
+                | ($mitternacht + 3600) as $a | ($mitternacht + 4 * 3600) as $b
+                | select($b <= now)
+                | (wert($p; $a)) as $wa | (wert($p; $b)) as $wb
+                | select($wa != null and $wb != null and $wb >= $wa)
+                | (($wb - $wa) * 1000 / 3) ] as $nacht
+            | {name: ($name[$e] // $e), letzte_nacht_w: ($nacht[0] // null | if . then (. * 10 | round / 10) else null end),
+               mittel_7_naechte_w: (if ($nacht | length) > 0 then ($nacht[0:7] | add / length * 10 | round / 10) else null end),
+               naechte: ($nacht | length)} ]
+        | {state: (map(.mittel_7_naechte_w // 0) | add | . * 10 | round / 10),
+           attributes: {friendly_name: "Strom-Grundlast nachts (2–5 Uhr)", icon: "mdi:sleep", unit_of_measurement: "W",
+                        steckdosen: ., stand: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}}' <<<"$verlauf")"
+}
