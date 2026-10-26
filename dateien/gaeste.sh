@@ -134,6 +134,14 @@ gast_anlegen() {
         echo "[dateien] Gast-Rechte setzen fehlgeschlagen (HTTP $code), Gast wieder entfernt."
         push "Dateien: Gast nicht angelegt" "Die Rechte konnten nicht gesetzt werden (Fehler $code). Der Gast wurde wieder entfernt."; return
     fi
+    # Gegenprobe: genau ein Speicher mit genau diesem Ordner, sonst Gast sofort wieder weg
+    fb_api "$tok" GET "/api/users?username=$(uri "$benutzer")" >/dev/null
+    if ! jq -e --arg q "$quelle" --arg s "$scope" '(.scopes | length) == 1 and .scopes[0].name == $q and .scopes[0].scope == $s
+            and (.permissions.admin | not) and (.permissions.share | not)' /tmp/fb_api.out >/dev/null 2>&1; then
+        fb_api "$tok" DELETE "/api/users?username=$(uri "$benutzer")" >/dev/null
+        echo "[dateien] Gast-Rechte stimmen nicht, Gast wieder entfernt."
+        push "Dateien: Gast nicht angelegt" "Die Rechte ließen sich nicht sicher auf einen Ordner begrenzen. Der Gast wurde wieder entfernt."; return
+    fi
 
     jetzt=$(date +%s)
     if [ "$tage" -gt 0 ]; then bis=$((jetzt + tage * 86400)); else bis=0; fi
