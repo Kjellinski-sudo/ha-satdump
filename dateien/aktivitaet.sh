@@ -129,3 +129,16 @@ papierkorb_pruefen() {
     ha_post states/sensor.dateien_papierkorb "$(jq -n --argjson g "$gesamt" '{state: ($g | length), attributes: {
         friendly_name: "Dateien: Papierkorb", icon: "mdi:delete-clock", unit_of_measurement: "Einträge", eintraege: $g}}')"
 }
+
+# Einmal am Tag nachsehen, ob es eine neuere FileBrowser-Quantum-Version gibt (nur melden, nichts installieren)
+quantum_update_pruefen() {
+    local merker=/tmp/quantum_update_geprueft neueste
+    [ -f "$merker" ] && [ $(( $(date +%s) - $(stat -c %Y "$merker") )) -lt 86400 ] && return
+    neueste=$(curl -s -m 15 -H "Accept: application/vnd.github+json" \
+        https://api.github.com/repos/gtsteffaniak/filebrowser/releases/latest | jq -r '.tag_name // empty' 2>/dev/null)
+    [ -n "$neueste" ] || return
+    touch "$merker"
+    ha_post states/sensor.dateien_quantum_update "$(jq -n --arg i "${DATEIEN_QUANTUM_VERSION:-?}" --arg n "$neueste" '{
+        state: (if $i == $n then "aktuell" else "Update verfügbar" end),
+        attributes: {friendly_name: "Dateien: FileBrowser Quantum", icon: "mdi:update", installiert: $i, neueste: $n}}')"
+}

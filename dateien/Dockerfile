@@ -6,6 +6,7 @@ ARG BUILD_ARCH
 ARG FBQ_VERSION=v2.0.2-stable
 ARG FBQ_SHA_ARM64=03eac074efc1b0ef3cb39882c04eeee26027049d261b6b6706650d4ac2d8e21c
 ARG FBQ_SHA_AMD64=5710dc6f51d77f1db884eace44f6952286c49f2ce40b6a59af37e0dc7c4a8bbd
+ENV DATEIEN_QUANTUM_VERSION=${FBQ_VERSION}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl jq mount util-linux librsvg2-bin sqlite3 nginx python3 \

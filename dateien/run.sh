@@ -171,6 +171,7 @@ belegung() {
         gaeste_melden
         papierkorb_pruefen
         woche_melden
+        quantum_update_pruefen
         sleep 300
     done
 }
