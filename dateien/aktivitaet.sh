@@ -138,6 +138,15 @@ quantum_update_pruefen() {
         https://api.github.com/repos/gtsteffaniak/filebrowser/releases/latest | jq -r '.tag_name // empty' 2>/dev/null)
     [ -n "$neueste" ] || return
     touch "$merker"
+    echo "$neueste" > /data/quantum_neueste
+    quantum_update_melden
+}
+
+# Ergebnis der letzten Prüfung (auch nach einem HA-Neustart sofort wieder da)
+quantum_update_melden() {
+    local neueste
+    neueste=$(cat /data/quantum_neueste 2>/dev/null)
+    [ -n "$neueste" ] || return
     ha_post states/sensor.dateien_quantum_update "$(jq -n --arg i "${DATEIEN_QUANTUM_VERSION:-?}" --arg n "$neueste" '{
         state: (if $i == $n then "aktuell" else "Update verfügbar" end),
         attributes: {friendly_name: "Dateien: FileBrowser Quantum", icon: "mdi:update", installiert: $i, neueste: $n}}')"

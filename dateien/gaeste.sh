@@ -288,6 +288,8 @@ befehl_ausfuehren() {
         gast_anlegen)  gast_anlegen "$cmd" ;;
         gast_loeschen) gast_entfernen "$(benutzername "$(jq -r '.benutzer // ""' <<<"$cmd")")" geloescht ;;
         ordner)        ordner_melden; gaeste_melden ;;
+        melden)        alles_melden ;;
+        wochenbericht) wochenbericht_ablegen "$cmd" ;;
         wiederherstellen) wiederherstellen "$(jq -r '.quelle // "Stick"' <<<"$cmd")" "$(jq -r '.name // ""' <<<"$cmd")" ;;
         *) echo "[dateien] Unbekannte Aktion ignoriert." ;;
     esac
@@ -334,4 +336,15 @@ regeln_entfernen() {
             fb_api "$tok" DELETE "/api/access?source=$(uri "$q")&path=%2F&ruleType=$t&ruleCategory=user&value=$(uri "$benutzer")&cascade=true" >/dev/null
         done
     done < <(jq -r '.[].name' "$QUELLEN")
+}
+
+# Wochenbericht als Textdatei auf dem ersten Stick ablegen (Archiv, im Datei-Manager unter „Wochenberichte“)
+wochenbericht_ablegen() {
+    local kw text datei
+    kw=$(jq -r '.kw // ""' <<<"$1" | tr -cd 'A-Za-z0-9-' | head -c 20)
+    text=$(jq -r '.text // ""' <<<"$1" | head -c 20000)
+    [ -n "$kw" ] && [ -n "$text" ] || return
+    mkdir -p "$MNT/Wochenberichte"
+    datei="$MNT/Wochenberichte/Wochenbericht-$kw.txt"
+    printf '%s\n' "$text" > "$datei" && echo "[dateien] Wochenbericht abgelegt: Wochenberichte/Wochenbericht-$kw.txt"
 }

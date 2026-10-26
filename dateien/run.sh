@@ -152,26 +152,32 @@ ha_post() {
 . /gaeste.sh
 . /aktivitaet.sh
 
+# Alle Werte an Home Assistant (alle 5 Min. und auf Zuruf, z. B. nach einem HA-Neustart)
+alles_melden() {
+    local pfad sensor titel total used avail
+    while IFS=$'\t' read -r pfad sensor titel; do
+        read -r total used avail <<<"$(df -B1 --output=size,used,avail "$pfad" | tail -1)"
+        if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then
+            ha_post "states/$sensor" "$(jq -n --argjson t "$total" --argjson u "$used" --argjson a "$avail" --arg n "Dateien: $titel belegt" '{
+                state: (($u * 1000 / $t | floor) / 10),
+                attributes: {unit_of_measurement: "%", friendly_name: $n, icon: "mdi:usb-flash-drive",
+                    belegt_gb: (($u / 1e8 | floor) / 10), frei_gb: (($a / 1e8 | floor) / 10), gesamt_gb: (($t / 1e8 | floor) / 10)}}')"
+        fi
+    done < <(jq -r '.[] | [.pfad, .sensor, .titel] | @tsv' "$QUELLEN")
+    ordner_melden
+    gaeste_melden
+    papierkorb_pruefen
+    woche_melden
+    quantum_update_melden
+}
+
 belegung() {
     sleep 20   # Quantum erst starten lassen
     admin_quellen
     while true; do
-        local q pfad sensor titel
-        while IFS=$'	' read -r pfad sensor titel; do
-            read -r total used avail <<<"$(df -B1 --output=size,used,avail "$pfad" | tail -1)"
-            if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then
-                ha_post "states/$sensor" "$(jq -n --argjson t "$total" --argjson u "$used" --argjson a "$avail" --arg n "Dateien: $titel belegt" '{
-                    state: (($u * 1000 / $t | floor) / 10),
-                    attributes: {unit_of_measurement: "%", friendly_name: $n, icon: "mdi:usb-flash-drive",
-                        belegt_gb: (($u / 1e8 | floor) / 10), frei_gb: (($a / 1e8 | floor) / 10), gesamt_gb: (($t / 1e8 | floor) / 10)}}')"
-            fi
-        done < <(jq -r '.[] | [.pfad, .sensor, .titel] | @tsv' "$QUELLEN")
-        ordner_melden
         gaeste_ablauf_pruefen
-        gaeste_melden
-        papierkorb_pruefen
-        woche_melden
         quantum_update_pruefen
+        alles_melden
         sleep 300
     done
 }
