@@ -1,5 +1,5 @@
 #!/bin/bash
-# Datei-Manager (FileBrowser Quantum) nur für den USB-Stick. Benutzer und Passwort kommen aus der
+# Datei-Manager (FileBrowser Quantum) nur für die USB-Sticks. Benutzer und Passwort kommen aus der
 # App-Konfiguration (setzt Kjell selbst) und werden nie ins Protokoll geschrieben.
 set -u
 
@@ -8,6 +8,9 @@ MNT=/mnt/stick
 CONF=/tmp/fbq-config.yaml
 
 LABEL=$(jq -r '.stick_label' "$OPT")
+LABEL2=$(jq -r '.stick2_label // ""' "$OPT")
+MNT2=/mnt/stick2
+QUELLEN=/tmp/quellen.json
 USER_NAME=$(jq -r '.username' "$OPT")
 USER_PW=$(jq -r '.password' "$OPT")
 PUSH_DIENST=$(jq -r '.push_dienst // "mobile_app_kjells_apfel"' "$OPT")
@@ -19,22 +22,51 @@ if [ -z "$USER_NAME" ] || [ "${#USER_PW}" -lt 12 ]; then
     exit 1
 fi
 
-# Stick per Name (Label) suchen, sonst /dev/sda1
-DEV=$(blkid -L "$LABEL" 2>/dev/null || true)
-[ -n "$DEV" ] || DEV=/dev/sda1
-if [ ! -b "$DEV" ]; then
+# Sticks einbinden: vfat/exFAT, ohne Ausführen
+einhaengen() {
+    local dev=$1 mnt=$2
+    [ -b "$dev" ] || return 1
+    mkdir -p "$mnt"
+    if ! mountpoint -q "$mnt"; then
+        mount -o rw,nosuid,nodev,noexec,uid=0,gid=0,umask=0022,iocharset=utf8 "$dev" "$mnt" || return 1
+    fi
+    echo "[dateien] Stick „$(blkid -s LABEL -o value "$dev" 2>/dev/null)“ eingebunden: $dev -> $mnt"
+}
+
+# Erster Stick ist Pflicht: per Name (Label), sonst /dev/sda1 wie bisher
+DEV1=$(blkid -L "$LABEL" 2>/dev/null || true)
+[ -n "$DEV1" ] || DEV1=/dev/sda1
+if ! einhaengen "$DEV1" "$MNT"; then
     echo "[dateien] USB-Stick „$LABEL“ nicht gefunden. Steckt er im Home-Assistant-Pi?"
     exit 1
 fi
 
-mkdir -p "$MNT"
-if ! mountpoint -q "$MNT"; then
-    if ! mount -o rw,nosuid,nodev,noexec,uid=0,gid=0,umask=0022,iocharset=utf8 "$DEV" "$MNT"; then
-        echo "[dateien] Stick konnte nicht eingebunden werden ($DEV)."
-        exit 1
-    fi
+# Zweiter Stick ist freiwillig: per Name, oder (Name leer) der erste andere USB-Stick mit FAT/exFAT.
+# Fehlt er, läuft alles nur mit dem ersten.
+STICK2=false
+DEV2=""
+if [ -n "$LABEL2" ]; then
+    DEV2=$(blkid -L "$LABEL2" 2>/dev/null || true)
+else
+    for d in /dev/sd[a-z]1; do
+        [ -b "$d" ] && [ "$d" != "$DEV1" ] || continue
+        case "$(blkid -s TYPE -o value "$d" 2>/dev/null)" in vfat|exfat) DEV2=$d; break ;; esac
+    done
 fi
-echo "[dateien] Stick eingebunden: $DEV -> $MNT"
+if [ -n "$DEV2" ] && [ "$DEV2" != "$DEV1" ] && einhaengen "$DEV2" "$MNT2"; then
+    STICK2=true
+else
+    echo "[dateien] Kein zweiter Stick gefunden – läuft nur mit dem ersten."
+fi
+
+# Quellen für Weiche, Papierkorb und Belegung
+jq -n --arg m1 "$MNT" --arg m2 "$MNT2" --argjson zwei "$STICK2" '[
+    {name: "Stick", pfad: $m1, sensor: "sensor.dateien_stick_belegt", titel: "Stick",
+     herkunft: "/data/papierkorb_herkunft.json", korbliste: "/data/papierkorb.json", korbsensor: "sensor.dateien_papierkorb"}
+  ] + (if $zwei then [
+    {name: "Stick 2", pfad: $m2, sensor: "sensor.dateien_stick2_belegt", titel: "Stick 2",
+     herkunft: "/data/papierkorb_herkunft_stick2.json", korbliste: "/data/papierkorb_stick2.json", korbsensor: "sensor.dateien_papierkorb_stick2"}
+  ] else [] end)' > "$QUELLEN"
 
 cleanup() {
     kill "${BEL_PID:-0}" "${LOG_PID:-0}" 2>/dev/null
@@ -43,6 +75,7 @@ cleanup() {
     wait "${FB_PID:-0}" 2>/dev/null
     sync
     umount "$MNT" 2>/dev/null
+    umount "$MNT2" 2>/dev/null
     exit 0
 }
 trap cleanup TERM INT
@@ -64,6 +97,7 @@ server:
       name: "Stick"
       config:
         defaultEnabled: true
+$(if [ "$STICK2" = true ]; then printf '    - path: "%s"\n      name: "Stick 2"\n      config:\n        defaultEnabled: true\n' "$MNT2"; fi)
   cacheDir: "/tmp/fbq-cache"
   cacheDirCleanup: true
   database:
@@ -81,7 +115,7 @@ auth:
       signup: false
 frontend:
   name: "Dateien"
-  description: "Dateien auf dem USB-Stick"
+  description: "Dateien auf den USB-Sticks"
   disableDefaultLinks: true
   externalLinks: []
   loginIcon: "/opt/dateien/logo.svg"
@@ -120,14 +154,18 @@ ha_post() {
 
 belegung() {
     sleep 20   # Quantum erst starten lassen
+    admin_quellen
     while true; do
-        read -r total used avail <<<"$(df -B1 --output=size,used,avail "$MNT" | tail -1)"
-        if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then
-            ha_post states/sensor.dateien_stick_belegt "$(jq -n --argjson t "$total" --argjson u "$used" --argjson a "$avail" '{
-                state: (($u * 1000 / $t | floor) / 10),
-                attributes: {unit_of_measurement: "%", friendly_name: "Dateien: Stick belegt", icon: "mdi:usb-flash-drive",
-                    belegt_gb: (($u / 1e8 | floor) / 10), frei_gb: (($a / 1e8 | floor) / 10), gesamt_gb: (($t / 1e8 | floor) / 10)}}')"
-        fi
+        local q pfad sensor titel
+        while IFS=$'	' read -r pfad sensor titel; do
+            read -r total used avail <<<"$(df -B1 --output=size,used,avail "$pfad" | tail -1)"
+            if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then
+                ha_post "states/$sensor" "$(jq -n --argjson t "$total" --argjson u "$used" --argjson a "$avail" --arg n "Dateien: $titel belegt" '{
+                    state: (($u * 1000 / $t | floor) / 10),
+                    attributes: {unit_of_measurement: "%", friendly_name: $n, icon: "mdi:usb-flash-drive",
+                        belegt_gb: (($u / 1e8 | floor) / 10), frei_gb: (($a / 1e8 | floor) / 10), gesamt_gb: (($t / 1e8 | floor) / 10)}}')"
+            fi
+        done < <(jq -r '.[] | [.pfad, .sensor, .titel] | @tsv' "$QUELLEN")
         ordner_melden
         gaeste_ablauf_pruefen
         gaeste_melden
@@ -173,7 +211,7 @@ watch_log() {
 }
 
 # Quantum nur intern (127.0.0.1:8081); nach außen (Tunnel, Port 8080) lauscht nginx mit der Papierkorb-Weiche
-python3 -I /opt/dateien/papierkorb_weiche.py 8082 8081 &
+DATEIEN_QUELLEN="$QUELLEN" python3 -I /opt/dateien/papierkorb_weiche.py 8082 8081 &
 WEICHE_PID=$!
 nginx -c /etc/dateien-nginx.conf -g 'daemon on;' || { echo "[dateien] nginx startet nicht."; exit 1; }
 

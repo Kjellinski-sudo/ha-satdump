@@ -1,87 +1,78 @@
 #!/usr/bin/env python3
 """Papierkorb-Weiche: nginx schickt nur die Lösch-Anfragen des Datei-Managers hierher.
 
-Statt endgültig zu löschen, wird mit den Rechten des angemeldeten Benutzers nach /Papierkorb
-verschoben (Quantum: PATCH /api/resources, action "move", rename bei Namensgleichheit).
+Statt endgültig zu löschen, wird mit den Rechten des angemeldeten Benutzers in den Ordner
+/Papierkorb derselben Quelle (Stick bzw. Stick 2) verschoben (Quantum: PATCH /api/resources, action "move").
 Was schon im Papierkorb liegt, wird wirklich gelöscht (Anfrage geht unverändert an Quantum).
 Schlägt das Verschieben fehl, wird NICHT gelöscht, der Eintrag kommt als "failed" zurück.
+Außerdem: POST /dateien-api/wiederherstellen legt Einträge an ihren alten Platz zurück.
 """
 import http.client
 import json
 import os
+import posixpath
+import sys
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 try:
     import fcntl
 except ImportError:  # nur zum Testen unter Windows
     fcntl = None
-import posixpath
-import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
 
 QUANTUM_HOST = "127.0.0.1"
 QUANTUM_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8081
 LISTEN_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8082
 KORB = "/Papierkorb"
-STICK = os.environ.get("DATEIEN_STICK", "/mnt/stick")
-HERKUNFT = os.environ.get("DATEIEN_HERKUNFT", "/data/papierkorb_herkunft.json")
 SPERRE = os.environ.get("DATEIEN_SPERRE", "/tmp/gaeste.lock")
 WEITERGEBEN = ("Authorization", "Cookie", "X-Forwarded-For", "X-Real-IP", "X-Forwarded-Proto", "X-Forwarded-Host", "User-Agent")
 
 
-def freier_name(name):
-    """Name im Papierkorb, der noch nicht vergeben ist: „bild.jpg“, „bild (1).jpg“, …"""
+def quellen_laden():
+    """Quelle -> {pfad, herkunft}; aus /tmp/quellen.json (von run.sh geschrieben)."""
+    try:
+        with open(os.environ.get("DATEIEN_QUELLEN", "/tmp/quellen.json"), encoding="utf-8") as f:
+            return {q["name"]: q for q in json.load(f)}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"Stick": {"name": "Stick", "pfad": os.environ.get("DATEIEN_STICK", "/mnt/stick"),
+                          "herkunft": os.environ.get("DATEIEN_HERKUNFT", "/data/papierkorb_herkunft.json")}}
+
+
+QUELLEN = quellen_laden()
+
+
+def freier_name(wurzel, ordner, name):
+    """Freier Name im Ordner (Pfad auf dem Stick), bei Gleichstand „name (1).ext“."""
     stamm, endung = os.path.splitext(name) if not name.startswith(".") else (name, "")
     kandidat, n = name, 0
-    while os.path.lexists(os.path.join(STICK, KORB.strip("/"), kandidat)):
+    while os.path.lexists(os.path.join(wurzel, ordner.strip("/"), kandidat)):
         n += 1
         kandidat = f"{stamm} ({n}){endung}"
     return kandidat
 
 
-def herkunft_merken(name_im_korb, pfad):
-    with open(SPERRE, "a") as sperre:
-        if fcntl:
-            fcntl.flock(sperre, fcntl.LOCK_EX)
-        try:
-            with open(HERKUNFT, encoding="utf-8") as f:
-                daten = json.load(f)
-        except (OSError, ValueError):
-            daten = {}
-        daten[name_im_korb] = {"pfad": "/" + pfad.strip("/"), "zeit": int(time.time())}
-        with open(HERKUNFT + ".neu", "w", encoding="utf-8") as f:
-            json.dump(daten, f, ensure_ascii=False)
-        os.replace(HERKUNFT + ".neu", HERKUNFT)
-
-
-def herkunft_lesen():
+def herkunft_lesen(quelle):
     try:
-        with open(HERKUNFT, encoding="utf-8") as f:
+        with open(quelle["herkunft"], encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}
 
 
-def herkunft_vergessen(name_im_korb):
+def herkunft_aendern(quelle, name_im_korb, pfad=None):
+    """pfad=None: Eintrag vergessen, sonst Herkunft merken."""
     with open(SPERRE, "a") as sperre:
         if fcntl:
             fcntl.flock(sperre, fcntl.LOCK_EX)
-        daten = herkunft_lesen()
-        daten.pop(name_im_korb, None)
-        with open(HERKUNFT + ".neu", "w", encoding="utf-8") as f:
+        daten = herkunft_lesen(quelle)
+        if pfad is None:
+            daten.pop(name_im_korb, None)
+        else:
+            daten[name_im_korb] = {"pfad": "/" + pfad.strip("/"), "zeit": int(time.time())}
+        with open(quelle["herkunft"] + ".neu", "w", encoding="utf-8") as f:
             json.dump(daten, f, ensure_ascii=False)
-        os.replace(HERKUNFT + ".neu", HERKUNFT)
-
-
-def freies_ziel(ordner, name):
-    """Freier Name im Zielordner (Stick-Pfad), bei Gleichstand „name (1).ext“."""
-    stamm, endung = os.path.splitext(name) if not name.startswith(".") else (name, "")
-    kandidat, n = name, 0
-    while os.path.lexists(os.path.join(STICK, ordner.strip("/"), kandidat)):
-        n += 1
-        kandidat = f"{stamm} ({n}){endung}"
-    return kandidat
+        os.replace(quelle["herkunft"] + ".neu", quelle["herkunft"])
 
 
 def im_korb(pfad):
@@ -116,29 +107,34 @@ class Weiche(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(daten)
 
+    def _move(self, source, von, nach):
+        anfrage = {"action": "move", "rename": False, "overwrite": False, "items": [
+            {"fromSource": source, "fromPath": von, "toSource": source, "toPath": nach}]}
+        status, antwort, _ = self._quantum("PATCH", "/api/resources", json.dumps(anfrage).encode())
+        try:
+            misslungen = bool(json.loads(antwort or b"{}").get("failed"))
+        except ValueError:
+            misslungen = False
+        return status, status in (200, 204) and not misslungen
+
     def _verschieben(self, eintraege):
         """eintraege: [(source, path)] -> (succeeded, failed) im Format von BulkDeleteResponse"""
         ok, fehler = [], []
         for source, pfad in eintraege:
-            name = freier_name(posixpath.basename(pfad.rstrip("/")) or "unbenannt")
-            anfrage = {"action": "move", "rename": False, "overwrite": False, "items": [
-                {"fromSource": source, "fromPath": pfad, "toSource": source, "toPath": f"{KORB}/{name}"}]}
-            status, antwort, _ = self._quantum("PATCH", "/api/resources", json.dumps(anfrage).encode())
-            if status in (200, 204):
+            quelle = QUELLEN.get(source)
+            if not quelle:
+                fehler.append({"source": source, "path": pfad, "message": "unbekannter Speicher"})
+                continue
+            name = freier_name(quelle["pfad"], KORB, posixpath.basename(pfad.rstrip("/")) or "unbenannt")
+            status, geklappt = self._move(source, pfad, f"{KORB}/{name}")
+            if geklappt:
+                ok.append({"source": source, "path": pfad, "message": "in den Papierkorb verschoben"})
                 try:
-                    ergebnis = json.loads(antwort or b"{}")
-                except ValueError:
-                    ergebnis = {}
-                if ergebnis.get("failed"):
-                    fehler.append({"source": source, "path": pfad, "message": "Verschieben in den Papierkorb fehlgeschlagen"})
-                else:
-                    ok.append({"source": source, "path": pfad, "message": "in den Papierkorb verschoben"})
-                    try:
-                        herkunft_merken(name, pfad)
-                    except OSError:
-                        pass
+                    herkunft_aendern(quelle, name, pfad)
+                except OSError:
+                    pass
             else:
-                fehler.append({"source": source, "path": pfad, "message": f"Verschieben in den Papierkorb nicht erlaubt ({status})"})
+                fehler.append({"source": source, "path": pfad, "message": f"Verschieben in den Papierkorb nicht möglich ({status})"})
         return ok, fehler
 
     def do_POST(self):
@@ -147,40 +143,39 @@ class Weiche(BaseHTTPRequestHandler):
             return self._senden(404, {"status": 404, "message": "nicht gefunden"})
         laenge = int(self.headers.get("Content-Length") or 0)
         try:
-            namen = json.loads(self.rfile.read(laenge) if laenge else b"{}").get("namen") or []
-            assert isinstance(namen, list) and len(namen) <= 200
+            daten = json.loads(self.rfile.read(laenge) if laenge else b"{}")
+            namen = daten.get("namen") or []
+            source = daten.get("quelle") or "Stick"
+            assert isinstance(namen, list) and len(namen) <= 200 and isinstance(source, str)
         except (ValueError, AssertionError, AttributeError):
             return self._senden(400, {"status": 400, "message": "ungültige Anfrage"})
+        quelle = QUELLEN.get(source)
+        if not quelle:
+            return self._senden(400, {"status": 400, "message": "unbekannter Speicher"})
         # Angemeldet? (Quantum prüft das Token/Cookie)
         status, _, _ = self._quantum("GET", "/api/users?username=self")
         if status != 200:
             return self._senden(401, {"status": 401, "message": "nicht angemeldet"})
-        herkunft = herkunft_lesen()
+        herkunft = herkunft_lesen(quelle)
         ok, fehler = [], []
         for name in namen:
             if not isinstance(name, str) or not name or "/" in name or name in (".", ".."):
                 fehler.append({"name": str(name), "grund": "ungültiger Name"})
                 continue
-            if not os.path.lexists(os.path.join(STICK, KORB.strip("/"), name)):
+            if not os.path.lexists(os.path.join(quelle["pfad"], KORB.strip("/"), name)):
                 fehler.append({"name": name, "grund": "liegt nicht im Papierkorb"})
                 continue
             alt = (herkunft.get(name) or {}).get("pfad") or "/" + name
             ordner = posixpath.dirname("/" + alt.strip("/")) or "/"
             if ".." in ordner.split("/") or im_korb(ordner):
                 ordner = "/"
-            os.makedirs(os.path.join(STICK, ordner.strip("/")), exist_ok=True)
-            ziel = posixpath.join(ordner, freies_ziel(ordner, posixpath.basename(alt.rstrip("/")) or name))
-            anfrage = {"action": "move", "rename": False, "overwrite": False, "items": [
-                {"fromSource": "Stick", "fromPath": f"{KORB}/{name}", "toSource": "Stick", "toPath": ziel}]}
-            st, antwort, _ = self._quantum("PATCH", "/api/resources", json.dumps(anfrage).encode())
-            try:
-                misslungen = bool(json.loads(antwort or b"{}").get("failed"))
-            except ValueError:
-                misslungen = False
-            if st in (200, 204) and not misslungen:
+            os.makedirs(os.path.join(quelle["pfad"], ordner.strip("/")), exist_ok=True)
+            ziel = posixpath.join(ordner, freier_name(quelle["pfad"], ordner, posixpath.basename(alt.rstrip("/")) or name))
+            st, geklappt = self._move(source, f"{KORB}/{name}", ziel)
+            if geklappt:
                 ok.append({"name": name, "ziel": ziel})
                 try:
-                    herkunft_vergessen(name)
+                    herkunft_aendern(quelle, name)
                 except OSError:
                     pass
             else:

@@ -2,11 +2,14 @@
 // Wird von nginx in jede Seite eingebunden; spricht nur mit /dateien-api/ (gleiche Adresse, eigene Anmeldung).
 (function () {
   "use strict";
-  var KORB = "/files/Stick/Papierkorb";
+  // /files/<Quelle>/Papierkorb – Quelle ist „Stick“ oder „Stick 2“
+  function korbQuelle() {
+    var m = decodeURIComponent(location.pathname).replace(/\/+$/, "").match(/^\/files\/([^\/]+)\/Papierkorb$/);
+    return m ? m[1] : null;
+  }
 
   function imKorb() {
-    var p = decodeURIComponent(location.pathname).replace(/\/+$/, "");
-    return p === KORB;
+    return korbQuelle() !== null;
   }
 
   function ausgewaehlt() {
@@ -31,7 +34,7 @@
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ namen: namen })
+      body: JSON.stringify({ quelle: korbQuelle(), namen: namen })
     }).then(function (r) { return r.json().catch(function () { return {}; }); })
       .then(function (e) {
         var ok = (e.wiederhergestellt || []).length, f = (e.fehler || []).length;

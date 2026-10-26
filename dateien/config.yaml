@@ -1,7 +1,7 @@
 name: Dateien (FileBrowser Quantum)
-version: "0.5.2"
+version: "0.6.0"
 slug: dateien
-description: Datei-Manager nur für den USB-Stick (FileBrowser Quantum, Neon-Design). Kein Zugriff auf Home Assistant, erreichbar über den Cloudflare-Tunnel (dateien.kjellh.de).
+description: Datei-Manager nur für die USB-Sticks (FileBrowser Quantum, Neon-Design). Kein Zugriff auf Home Assistant, erreichbar über den Cloudflare-Tunnel (dateien.kjellh.de).
 url: https://github.com/Kjellinski-sudo/ha-satdump
 arch:
   - aarch64
@@ -18,16 +18,21 @@ apparmor: false
 homeassistant_api: true
 # Gäste anlegen/löschen aus Home Assistant (hassio.addon_stdin), v0.3.0
 stdin: true
+# Sticks werden per Name (Label) gefunden; fehlende Geräte überspringt der Supervisor
 devices:
   - /dev/sda1
+  - /dev/sdb1
+  - /dev/sdc1
 options:
   stick_label: ESD-USB
+  stick2_label: ""
   username: ""
   password: ""
   push_dienst: mobile_app_kjells_apfel
   passwort_per_push: false
 schema:
   stick_label: str
+  stick2_label: str?
   username: str
   password: password
   push_dienst: str?

@@ -49,10 +49,16 @@ push() {
         '{title: $t, message: $m, data: {tag: $tag, url: "https://dateien.kjellh.de"}}')"
 }
 
+# Ordner der obersten Ebene beider Sticks; die vom zweiten Stick mit „Stick 2/“ davor
 ordner_melden() {
-    local liste
-    liste=$(find "$MNT" -mindepth 1 -maxdepth 1 -type d ! -name '.*' ! -name 'System Volume Information' -printf '%f\n' 2>/dev/null | sort | jq -R . | jq -s .)
-    ha_post states/sensor.dateien_ordner "$(jq -n --argjson o "$liste" '{state: ($o|length), attributes: {ordner: $o, friendly_name: "Dateien: Ordner auf dem Stick", icon: "mdi:folder-multiple"}}')"
+    local liste liste2='[]' zwei=false
+    liste=$(find "$MNT" -mindepth 1 -maxdepth 1 -type d ! -name '.*' ! -name 'System Volume Information' ! -name 'Papierkorb' -printf '%f\n' 2>/dev/null | sort | jq -R . | jq -s .)
+    if mountpoint -q "$MNT2" 2>/dev/null; then
+        zwei=true
+        liste2=$(find "$MNT2" -mindepth 1 -maxdepth 1 -type d ! -name '.*' ! -name 'System Volume Information' ! -name 'Papierkorb' -printf 'Stick 2/%f\n' 2>/dev/null | sort | jq -R . | jq -s .)
+    fi
+    ha_post states/sensor.dateien_ordner "$(jq -n --argjson o "$liste" --argjson o2 "$liste2" --argjson z "$zwei" '{state: (($o + $o2)|length),
+        attributes: {ordner: ($o + $o2), stick2: $z, friendly_name: "Dateien: Ordner auf den Sticks", icon: "mdi:folder-multiple"}}')"
 }
 
 gaeste_melden() {
@@ -78,15 +84,26 @@ gast_anlegen() {
         push "Dateien: Gast nicht angelegt" "Den Benutzer „$benutzer“ gibt es schon. Bitte einen anderen Namen wählen oder den alten Gast zuerst löschen."; return
     fi
 
+    # Speicher: „Stick 2/…“, __neu2__ und __alles2__ meinen den zweiten Stick, alles andere den ersten
+    local quelle="Stick" wurzel="$MNT" anzeige
+    case "$ordner" in
+        "Stick 2/"*|__neu2__|__alles2__)
+            if ! mountpoint -q "$MNT2" 2>/dev/null; then push "Dateien: Gast nicht angelegt" "Stick 2 ist gerade nicht eingesteckt."; return; fi
+            quelle="Stick 2"; wurzel="$MNT2"; ordner=${ordner#Stick 2/}
+            case "$ordner" in __neu2__) ordner=__neu__ ;; __alles2__) ordner=__alles__ ;; esac ;;
+    esac
     # Ordner: neuer Gast-Ordner, ganzer Stick oder ein vorhandener Ordner der obersten Ebene
     case "$ordner" in
-        __neu__) ordner="Gast-$name"; ordner=$(printf '%s' "$ordner" | tr -d '/\\' | head -c 60); mkdir -p "$MNT/$ordner"; scope="/$ordner" ;;
+        __neu__) ordner="Gast-$name"; ordner=$(printf '%s' "$ordner" | tr -d '/\\' | head -c 60); mkdir -p "$wurzel/$ordner"; scope="/$ordner" ;;
         ""|/|__alles__) ordner=""; scope="/" ;;
-        *) if [[ "$ordner" == */* || "$ordner" == .* || ! -d "$MNT/$ordner" ]]; then
-               push "Dateien: Gast nicht angelegt" "Der Ordner „$ordner“ wurde auf dem Stick nicht gefunden."; return
+        *) if [[ "$ordner" == */* || "$ordner" == .* || "$ordner" == Papierkorb || ! -d "$wurzel/$ordner" ]]; then
+               push "Dateien: Gast nicht angelegt" "Der Ordner „$ordner“ wurde auf $quelle nicht gefunden."; return
            fi
            scope="/$ordner" ;;
     esac
+    # So steht es in Liste und Push: „Fotos“, „Stick 2/Fotos“, „Ganzer Stick“, „Ganzer Stick 2“
+    if [ -n "$ordner" ]; then anzeige="$ordner"; [ "$quelle" = "Stick 2" ] && anzeige="Stick 2/$ordner"
+    else anzeige="Ganzer $quelle"; fi
     case "$recht" in
         hochladen)   perms='{"view":true,"download":true,"modify":false,"delete":false,"create":true,"configured":true}' ;;
         briefkasten) perms='{"view":false,"download":false,"modify":false,"delete":false,"create":true,"configured":true}' ;;
@@ -110,8 +127,8 @@ gast_anlegen() {
         push "Dateien: Gast nicht angelegt" "Der Datei-Manager hat das Anlegen abgelehnt (Fehler $code)."; return
     fi
     code=$(fb_api "$tok" PATCH "/api/users?username=$(uri "$benutzer")" "$(jq -n --arg u "$benutzer" --arg s "$scope" \
-        --argjson perm "$perms" --argjson rp "$rp" --argjson lp "$lp" '{which: ["scopes","requirePasswordChange","lockPassword"],
-        data: {username: $u, requirePasswordChange: $rp, lockPassword: $lp, scopes: [{name: "Stick", scope: $s, permissions: $perm}]}}')")
+        --argjson perm "$perms" --argjson rp "$rp" --argjson lp "$lp" --arg q "$quelle" '{which: ["scopes","requirePasswordChange","lockPassword"],
+        data: {username: $u, requirePasswordChange: $rp, lockPassword: $lp, scopes: [{name: $q, scope: $s, permissions: $perm}]}}')")
     if [ "$code" != 204 ] && [ "$code" != 200 ]; then
         fb_api "$tok" DELETE "/api/users?username=$(uri "$benutzer")" >/dev/null
         echo "[dateien] Gast-Rechte setzen fehlgeschlagen (HTTP $code), Gast wieder entfernt."
@@ -122,15 +139,15 @@ gast_anlegen() {
     if [ "$tage" -gt 0 ]; then bis=$((jetzt + tage * 86400)); else bis=0; fi
     (
         flock 9
-        jq --arg n "$name" --arg b "$benutzer" --arg r "$recht" --arg o "${ordner:-Ganzer Stick}" --arg e "$email" \
+        jq --arg n "$name" --arg b "$benutzer" --arg r "$recht" --arg o "$anzeige" --arg e "$email" \
            --argjson bis "$bis" --argjson j "$jetzt" \
            '. + [{name: $n, benutzer: $b, recht: $r, ordner: $o, email: $e, bis: $bis, angelegt: $j, erste_anmeldung: null}]' \
            "$GAESTE" > "$GAESTE.neu" && mv "$GAESTE.neu" "$GAESTE"
     ) 9>"$LOCK"
     gaeste_melden
     ordner_melden
-    echo "[dateien] Gast „$benutzer“ angelegt ($recht, ${ordner:-ganzer Stick}, $tage Tage)."
-    logbuch "Gast $name ($benutzer) angelegt: $recht, Ordner ${ordner:-ganzer Stick}, $([ "$tage" -gt 0 ] && echo "$tage Tage" || echo unbegrenzt)"
+    echo "[dateien] Gast „$benutzer“ angelegt ($recht, $anzeige, $tage Tage)."
+    logbuch "Gast $name ($benutzer) angelegt: $recht, Ordner $anzeige, $([ "$tage" -gt 0 ] && echo "$tage Tage" || echo unbegrenzt)"
 
     case "$recht" in
         ansehen) hinweis="nur ansehen und herunterladen" ;;
@@ -145,24 +162,24 @@ gast_anlegen() {
         einmalig)  push "Dateien: Gast $name angelegt" "Benutzer: $benutzer
 Einmal-Passwort: $pw
 (muss beim ersten Login geändert werden)
-Ordner: ${ordner:-ganzer Stick} · $hinweis
+Ordner: $anzeige · $hinweis
 Gültig: $gueltig
 $LINK
 $cf" ;;
         dauerhaft) push "Dateien: Gast $name angelegt" "Benutzer: $benutzer
 Passwort: $pw
-Ordner: ${ordner:-ganzer Stick} · $hinweis
+Ordner: $anzeige · $hinweis
 Gültig: $gueltig
 $LINK
 $cf" ;;
         selbst)    push "Dateien: Gast $name angelegt" "Benutzer: $benutzer
 Passwort bitte selbst setzen: im Datei-Manager Einstellungen > Benutzerverwaltung > $benutzer.
-Ordner: ${ordner:-ganzer Stick} · $hinweis
+Ordner: $anzeige · $hinweis
 Gültig: $gueltig
 $cf" ;;
     esac
     pw=""
-    ha_post events/dateien_gast_angelegt "$(jq -n --arg b "$benutzer" --arg r "$recht" --arg o "${ordner:-Ganzer Stick}" '{benutzer: $b, recht: $r, ordner: $o}')"
+    ha_post events/dateien_gast_angelegt "$(jq -n --arg b "$benutzer" --arg r "$recht" --arg o "$anzeige" '{benutzer: $b, recht: $r, ordner: $o}')"
 }
 
 # gast_entfernen BENUTZER GRUND(geloescht|abgelaufen)
@@ -224,40 +241,32 @@ befehl_ausfuehren() {
         gast_anlegen)  gast_anlegen "$cmd" ;;
         gast_loeschen) gast_entfernen "$(benutzername "$(jq -r '.benutzer // ""' <<<"$cmd")")" geloescht ;;
         ordner)        ordner_melden; gaeste_melden ;;
-        wiederherstellen) wiederherstellen "$(jq -r '.name // ""' <<<"$cmd")" ;;
+        wiederherstellen) wiederherstellen "$(jq -r '.quelle // "Stick"' <<<"$cmd")" "$(jq -r '.name // ""' <<<"$cmd")" ;;
         *) echo "[dateien] Unbekannte Aktion ignoriert." ;;
     esac
 }
 
-# Papierkorb: Eintrag an seinen alten Platz zurück (fehlende Ordner werden angelegt, bei gleichem Namen „ (1)“)
+# Papierkorb: Eintrag an seinen alten Platz zurück – dieselbe Weiche wie der Menüpunkt im Datei-Manager
 wiederherstellen() {
-    local name=$1 herkunft=/data/papierkorb_herkunft.json pfad ordner ziel stamm endung n tok code
+    local quelle=${1:-Stick} name=$2 tok antwort
     case "$name" in ""|*/*|.|..) push "Dateien: nicht wiederhergestellt" "Ungültiger Name."; return ;; esac
-    if [ ! -e "$MNT/Papierkorb/$name" ]; then
-        push "Dateien: nicht wiederhergestellt" "„$name“ liegt nicht (mehr) im Papierkorb."; return
-    fi
-    pfad=$(jq -r --arg n "$name" '.[$n].pfad // empty' "$herkunft" 2>/dev/null)
-    [ -n "$pfad" ] || pfad="/$name"   # Herkunft unbekannt (z. B. von Hand hineingelegt): oberste Ebene
-    ordner=$(dirname "$pfad"); [ "$ordner" = "." ] && ordner=/
-    case "$ordner" in *..*) push "Dateien: nicht wiederhergestellt" "Ungültiger Zielordner."; return ;; esac
-    mkdir -p "$MNT$ordner"
-    ziel=$(basename "$pfad")
-    if [ -e "$MNT$ordner/$ziel" ]; then
-        stamm=${ziel%.*}; endung=${ziel#"$stamm"}; [ "$stamm" = "" ] && { stamm=$ziel; endung=""; }
-        n=1; while [ -e "$MNT$ordner/$stamm ($n)$endung" ]; do n=$((n + 1)); done
-        ziel="$stamm ($n)$endung"
-    fi
     tok=$(admin_token)
-    code=$(fb_api "$tok" PATCH /api/resources "$(jq -n --arg f "/Papierkorb/$name" --arg t "${ordner%/}/$ziel" \
-        '{action: "move", rename: false, overwrite: false, items: [{fromSource: "Stick", fromPath: $f, toSource: "Stick", toPath: $t}]}')")
-    if [ "$code" != 200 ] && [ "$code" != 204 ] || jq -e '(.failed // []) | length > 0' /tmp/fb_api.out >/dev/null 2>&1; then
-        echo "[dateien] Wiederherstellen fehlgeschlagen (HTTP $code)."
-        push "Dateien: nicht wiederhergestellt" "„$name“ konnte nicht zurückgelegt werden (Fehler $code)."; return
+    antwort=$(curl -s -m 60 -X POST http://127.0.0.1:8082/dateien-api/wiederherstellen -H "Authorization: Bearer $tok" \
+        -H "Content-Type: application/json" -d "$(jq -n --arg q "$quelle" --arg n "$name" '{quelle: $q, namen: [$n]}')")
+    if ! jq -e '(.wiederhergestellt // []) | length > 0' >/dev/null 2>&1 <<<"$antwort"; then
+        echo "[dateien] Wiederherstellen fehlgeschlagen."
+        push "Dateien: nicht wiederhergestellt" "„$name“ konnte nicht zurückgelegt werden: $(jq -r '.fehler[0].grund // .message // "unbekannter Fehler"' <<<"$antwort" 2>/dev/null)"; return
     fi
-    (
-        flock 9
-        jq --arg n "$name" 'del(.[$n])' "$herkunft" > "$herkunft.neu" 2>/dev/null && mv "$herkunft.neu" "$herkunft"
-    ) 9>"$LOCK"
     # Logbuch-Eintrag kommt aus dem Aktivitätsprotokoll (Verschieben aus dem Papierkorb)
     papierkorb_pruefen
+}
+
+# Kjells Benutzer bekommt Zugriff auf alle eingebundenen Sticks (nach jedem Start, falls ein Stick dazukam)
+admin_quellen() {
+    local tok scopes code
+    tok=$(admin_token)
+    scopes=$(jq '[.[] | {name, scope: "/", permissions: {view: true, download: true, modify: true, delete: true, create: true, configured: true}}]' "$QUELLEN")
+    code=$(fb_api "$tok" PATCH "/api/users?username=$(uri "$USER_NAME")" "$(jq -n --arg u "$USER_NAME" --argjson s "$scopes" \
+        '{which: ["scopes"], data: {username: $u, scopes: $s}}')")
+    echo "[dateien] Speicher für den Hauptbenutzer gesetzt (HTTP $code)."
 }

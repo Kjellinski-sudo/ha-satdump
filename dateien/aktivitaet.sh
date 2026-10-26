@@ -5,7 +5,6 @@ FBDB=/data/quantum/filebrowser.sqlite
 LETZTE_ID=/data/aktivitaet_letzte_id
 WOCHE=/data/woche.json
 PAPIERKORB_DIR="Papierkorb"
-PAPIERKORB_LISTE=/data/papierkorb.json
 PAPIERKORB_TAGE=7
 
 silent_an() {
@@ -56,7 +55,8 @@ aktivitaet_pruefen() {
         return
     fi
     zeilen=$(sqlite3 -readonly -json "$FBDB" "select a.id, a.created_at, coalesce(u.username, '?') as benutzer, a.event_type as typ,
-        coalesce(a.path,'') as path, coalesce(a.target_path,'') as target, coalesce(a.details,'{}') as details, a.success
+        coalesce(a.path,'') as path, coalesce(a.target_path,'') as target, coalesce(a.details,'{}') as details, a.success,
+        coalesce(a.source,'') as quelle
         from activity_log a left join users u on u.user_id = a.user_id where a.id > $letzte order by a.id limit 200" 2>/dev/null)
     [ -n "$zeilen" ] || return
     local zeile id benutzer typ was ziel n
@@ -65,14 +65,16 @@ aktivitaet_pruefen() {
         id=$(jq -r .id <<<"$zeile"); benutzer=$(jq -r .benutzer <<<"$zeile"); typ=$(jq -r .typ <<<"$zeile")
         was=$(pfade <<<"$zeile"); ziel=$(jq -r '.target | ltrimstr("/")' <<<"$zeile")
         n=$(jq -r '(.details | fromjson? | .fileCount) // 1' <<<"$zeile")
+        # auf dem zweiten Stick den Namen des Speichers voranstellen
+        if [ "$(jq -r .quelle <<<"$zeile")" = "Stick 2" ]; then was="Stick 2/$was"; [ -n "$ziel" ] && ziel="Stick 2/$ziel"; fi
         case "$typ" in
             login)       logbuch "$benutzer hat sich angemeldet"; woche_zaehlen anmeldungen ;;
             logout)      ;;
             upload)      logbuch "$benutzer hat „$was“ hochgeladen"; woche_zaehlen hochgeladen
                          jq -e --arg b "$benutzer" 'any(.[]; .benutzer == $b)' "$GAESTE" >/dev/null 2>&1 && gast_hoch[$benutzer]=$(( ${gast_hoch[$benutzer]:-0} + 1 )) ;;
             download)    logbuch "$benutzer hat „$was“ heruntergeladen"; woche_zaehlen heruntergeladen "$n" ;;
-            move|rename) if [[ "$ziel" == "$PAPIERKORB_DIR"/* ]]; then logbuch "$benutzer hat „$was“ in den Papierkorb gelegt"
-                         elif [[ "$was" == "$PAPIERKORB_DIR"/* ]]; then logbuch "$benutzer hat „${was#"$PAPIERKORB_DIR"/}“ aus dem Papierkorb wiederhergestellt nach „$ziel“"
+            move|rename) if [[ "${ziel#Stick 2/}" == "$PAPIERKORB_DIR"/* ]]; then logbuch "$benutzer hat „$was“ in den Papierkorb gelegt"
+                         elif [[ "${was#Stick 2/}" == "$PAPIERKORB_DIR"/* ]]; then logbuch "$benutzer hat „${was/$PAPIERKORB_DIR\//}“ aus dem Papierkorb wiederhergestellt nach „$ziel“"
                          else logbuch "$benutzer hat „$was“ nach „$ziel“ verschoben/umbenannt"; fi
                          woche_zaehlen verschoben ;;
             copy)        logbuch "$benutzer hat „$was“ nach „$ziel“ kopiert" ;;
@@ -93,34 +95,37 @@ aktivitaet_pruefen() {
     done
 }
 
-# Papierkorb: Ordner „Papierkorb“ auf dem Stick; was darin liegt, wird nach 7 Tagen endgültig gelöscht.
+# Papierkorb: Ordner „Papierkorb“ auf jedem Stick; was darin liegt, wird nach 7 Tagen endgültig gelöscht.
 # Gezählt wird ab dem Zeitpunkt, an dem die App den Eintrag zum ersten Mal im Papierkorb sieht.
+# Alle Sticks zusammen landen in sensor.dateien_papierkorb (Einträge mit „quelle“).
 papierkorb_pruefen() {
-    local dir="$MNT/$PAPIERKORB_DIR" jetzt eintraege
-    mkdir -p "$dir"
-    [ -f "$PAPIERKORB_LISTE" ] || echo '{}' > "$PAPIERKORB_LISTE"
+    local jetzt gesamt='[]' quelle wurzel liste herkunft dir eintraege name
     jetzt=$(date +%s)
-    eintraege=$(find "$dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | jq -R . | jq -s .)
-    jq --argjson e "$eintraege" --argjson j "$jetzt" \
-        'with_entries(select(.key as $k | $e | index($k))) as $alt | reduce $e[] as $k ($alt; .[$k] //= $j)' \
-        "$PAPIERKORB_LISTE" > "$PAPIERKORB_LISTE.neu" && mv "$PAPIERKORB_LISTE.neu" "$PAPIERKORB_LISTE"
-    local name
-    while IFS= read -r name; do
-        [ -n "$name" ] || continue
-        case "$name" in */*|.|..) continue ;; esac
-        rm -rf -- "$dir/$name" && logbuch "Papierkorb: „$name“ nach $PAPIERKORB_TAGE Tagen endgültig gelöscht"
-    done < <(jq -r --argjson g $((jetzt - PAPIERKORB_TAGE * 86400)) 'to_entries[] | select(.value <= $g) | .key' "$PAPIERKORB_LISTE")
-    jq --argjson g $((jetzt - PAPIERKORB_TAGE * 86400)) 'with_entries(select(.value > $g))' "$PAPIERKORB_LISTE" \
-        > "$PAPIERKORB_LISTE.neu" && mv "$PAPIERKORB_LISTE.neu" "$PAPIERKORB_LISTE"
-    # Herkunft (von der Papierkorb-Weiche gemerkt) auf vorhandene Einträge kürzen
-    local herkunft=/data/papierkorb_herkunft.json
-    [ -f "$herkunft" ] || echo '{}' > "$herkunft"
-    (
-        flock 9
-        jq --argjson e "$eintraege" 'with_entries(select(.key as $k | $e | index($k)))' "$herkunft" > "$herkunft.neu" && mv "$herkunft.neu" "$herkunft"
-    ) 9>"$LOCK"
-    ha_post states/sensor.dateien_papierkorb "$(jq --argjson j "$jetzt" --argjson t "$PAPIERKORB_TAGE" --slurpfile h "$herkunft" '{state: length, attributes: {
-        friendly_name: "Dateien: Papierkorb", icon: "mdi:delete-clock", unit_of_measurement: "Einträge",
-        eintraege: [to_entries[] | {name: .key, herkunft: ($h[0][.key].pfad // null),
-                    loeschen_am: ((.value + $t * 86400) | strftime("%Y-%m-%dT%H:%M:%SZ"))}]}}' "$PAPIERKORB_LISTE")"
+    while IFS=$'	' read -r quelle wurzel liste herkunft; do
+        dir="$wurzel/$PAPIERKORB_DIR"
+        mkdir -p "$dir"
+        [ -f "$liste" ] || echo '{}' > "$liste"
+        [ -f "$herkunft" ] || echo '{}' > "$herkunft"
+        eintraege=$(find "$dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | jq -R . | jq -s .)
+        jq --argjson e "$eintraege" --argjson j "$jetzt" \
+            'with_entries(select(.key as $k | $e | index($k))) as $alt | reduce $e[] as $k ($alt; .[$k] //= $j)' \
+            "$liste" > "$liste.neu" && mv "$liste.neu" "$liste"
+        while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            case "$name" in */*|.|..) continue ;; esac
+            rm -rf -- "$dir/$name" && logbuch "Papierkorb${quelle:+ ($quelle)}: „$name“ nach $PAPIERKORB_TAGE Tagen endgültig gelöscht"
+        done < <(jq -r --argjson g $((jetzt - PAPIERKORB_TAGE * 86400)) 'to_entries[] | select(.value <= $g) | .key' "$liste")
+        jq --argjson g $((jetzt - PAPIERKORB_TAGE * 86400)) 'with_entries(select(.value > $g))' "$liste" \
+            > "$liste.neu" && mv "$liste.neu" "$liste"
+        # Herkunft (von der Papierkorb-Weiche gemerkt) auf vorhandene Einträge kürzen
+        (
+            flock 9
+            jq --argjson e "$eintraege" 'with_entries(select(.key as $k | $e | index($k)))' "$herkunft" > "$herkunft.neu" && mv "$herkunft.neu" "$herkunft"
+        ) 9>"$LOCK"
+        gesamt=$(jq --argjson g "$gesamt" --arg q "$quelle" --argjson t "$PAPIERKORB_TAGE" --slurpfile h "$herkunft" \
+            '$g + [to_entries[] | {quelle: $q, name: .key, herkunft: ($h[0][.key].pfad // null),
+                   loeschen_am: ((.value + $t * 86400) | strftime("%Y-%m-%dT%H:%M:%SZ"))}]' "$liste")
+    done < <(jq -r '.[] | [.name, .pfad, .korbliste, .herkunft] | @tsv' "$QUELLEN")
+    ha_post states/sensor.dateien_papierkorb "$(jq -n --argjson g "$gesamt" '{state: ($g | length), attributes: {
+        friendly_name: "Dateien: Papierkorb", icon: "mdi:delete-clock", unit_of_measurement: "Einträge", eintraege: $g}}')"
 }
