@@ -14,7 +14,7 @@ import posixpath
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 try:
     import fcntl
@@ -26,6 +26,9 @@ QUANTUM_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8081
 LISTEN_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8082
 KORB = "/Papierkorb"
 SPERRE = os.environ.get("DATEIEN_SPERRE", "/tmp/gaeste.lock")
+# Hauptbenutzer (nur für Gäste mit Löschrecht, die den Papierkorb selbst nicht sehen)
+ADMIN_NAME = os.environ.get("DATEIEN_ADMIN_USER", "")
+ADMIN_PW = os.environ.get("DATEIEN_ADMIN_PW", "")
 WEITERGEBEN = ("Authorization", "Cookie", "X-Forwarded-For", "X-Real-IP", "X-Forwarded-Proto", "X-Forwarded-Host", "User-Agent")
 
 
@@ -117,6 +120,50 @@ class Weiche(BaseHTTPRequestHandler):
             misslungen = False
         return status, status in (200, 204) and not misslungen
 
+    def _gast_verschieben(self, source, pfad, ziel):
+        """Gäste sehen den Papierkorb nicht. Hat der Gast Löschrecht und sieht er den Eintrag, verschiebt die App
+        ihn mit dem Hauptbenutzer in den Papierkorb (Pfad des Gastes relativ zu seinem Startordner)."""
+        status, antwort, _ = self._quantum("GET", "/api/users?username=self")
+        if status != 200:
+            return status, False
+        try:
+            ich = json.loads(antwort)
+            scope = next(s for s in ich.get("scopes", []) if s.get("name") == source)
+        except (ValueError, StopIteration, AttributeError):
+            return 403, False
+        if not (scope.get("permissions") or {}).get("delete"):
+            return 403, False
+        status, _, _ = self._quantum("GET", "/api/resources?" + urlencode({"path": pfad, "source": source}))
+        if status != 200:
+            return 403, False
+        absolut = posixpath.join("/" + (scope.get("scope") or "/").strip("/"), pfad.lstrip("/"))
+        if im_korb(absolut) or not ADMIN_NAME:
+            return 403, False
+        con = http.client.HTTPConnection(QUANTUM_HOST, QUANTUM_PORT, timeout=30)
+        try:
+            con.request("POST", "/api/auth/login?" + urlencode({"username": ADMIN_NAME}), headers={"X-Password": quote(ADMIN_PW, safe="")})
+            antwort = con.getresponse()
+            token = antwort.read().decode()
+            if antwort.status != 200:
+                return antwort.status, False
+        finally:
+            con.close()
+        anfrage = {"action": "move", "rename": False, "overwrite": False, "items": [
+            {"fromSource": source, "fromPath": absolut, "toSource": source, "toPath": ziel}]}
+        con = http.client.HTTPConnection(QUANTUM_HOST, QUANTUM_PORT, timeout=120)
+        try:
+            con.request("PATCH", "/api/resources", body=json.dumps(anfrage).encode(),
+                        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+            antwort = con.getresponse()
+            inhalt = antwort.read()
+            try:
+                misslungen = bool(json.loads(inhalt or b"{}").get("failed"))
+            except ValueError:
+                misslungen = False
+            return antwort.status, antwort.status in (200, 204) and not misslungen, absolut
+        finally:
+            con.close()
+
     def _verschieben(self, eintraege):
         """eintraege: [(source, path)] -> (succeeded, failed) im Format von BulkDeleteResponse"""
         ok, fehler = [], []
@@ -127,6 +174,17 @@ class Weiche(BaseHTTPRequestHandler):
                 continue
             name = freier_name(quelle["pfad"], KORB, posixpath.basename(pfad.rstrip("/")) or "unbenannt")
             status, geklappt = self._move(source, pfad, f"{KORB}/{name}")
+            if not geklappt:
+                ergebnis = self._gast_verschieben(source, pfad, f"{KORB}/{name}")
+                status, geklappt = ergebnis[0], ergebnis[1]
+                if geklappt:
+                    pfad_merken = ergebnis[2]
+                    ok.append({"source": source, "path": pfad, "message": "in den Papierkorb verschoben"})
+                    try:
+                        herkunft_aendern(quelle, name, pfad_merken)
+                    except OSError:
+                        pass
+                    continue
             if geklappt:
                 ok.append({"source": source, "path": pfad, "message": "in den Papierkorb verschoben"})
                 try:

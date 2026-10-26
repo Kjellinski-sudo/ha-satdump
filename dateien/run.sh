@@ -211,7 +211,8 @@ watch_log() {
 }
 
 # Quantum nur intern (127.0.0.1:8081); nach außen (Tunnel, Port 8080) lauscht nginx mit der Papierkorb-Weiche
-DATEIEN_QUELLEN="$QUELLEN" python3 -I /opt/dateien/papierkorb_weiche.py 8082 8081 &
+DATEIEN_QUELLEN="$QUELLEN" DATEIEN_ADMIN_USER="$USER_NAME" DATEIEN_ADMIN_PW="$USER_PW" \
+    python3 -I /opt/dateien/papierkorb_weiche.py 8082 8081 &
 WEICHE_PID=$!
 nginx -c /etc/dateien-nginx.conf -g 'daemon on;' || { echo "[dateien] nginx startet nicht."; exit 1; }
 

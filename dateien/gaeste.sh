@@ -84,30 +84,47 @@ gast_anlegen() {
         push "Dateien: Gast nicht angelegt" "Den Benutzer „$benutzer“ gibt es schon. Bitte einen anderen Namen wählen oder den alten Gast zuerst löschen."; return
     fi
 
-    # Speicher: „Stick 2/…“, __neu2__ und __alles2__ meinen den zweiten Stick, alles andere den ersten
-    local quelle="Stick" wurzel="$MNT" anzeige
-    case "$ordner" in
-        "Stick 2/"*|__neu2__|__alles2__)
-            if ! mountpoint -q "$MNT2" 2>/dev/null; then push "Dateien: Gast nicht angelegt" "Stick 2 ist gerade nicht eingesteckt."; return; fi
-            quelle="Stick 2"; wurzel="$MNT2"; ordner=${ordner#Stick 2/}
-            case "$ordner" in __neu2__) ordner=__neu__ ;; __alles2__) ordner=__alles__ ;; esac ;;
-    esac
-    # Ordner: neuer Gast-Ordner, ganzer Stick oder ein vorhandener Ordner der obersten Ebene
-    case "$ordner" in
-        __neu__) ordner="Gast-$name"; ordner=$(printf '%s' "$ordner" | tr -d '/\\' | head -c 60); mkdir -p "$wurzel/$ordner"; scope="/$ordner" ;;
-        ""|/|__alles__) ordner=""; scope="/" ;;
-        *) if [[ "$ordner" == */* || "$ordner" == .* || "$ordner" == Papierkorb || ! -d "$wurzel/$ordner" ]]; then
-               push "Dateien: Gast nicht angelegt" "Der Ordner „$ordner“ wurde auf $quelle nicht gefunden."; return
-           fi
-           scope="/$ordner" ;;
-    esac
-    # So steht es in Liste und Push: „Fotos“, „Stick 2/Fotos“, „Ganzer Stick“, „Ganzer Stick 2“
-    if [ -n "$ordner" ]; then anzeige="$ordner"; [ "$quelle" = "Stick 2" ] && anzeige="Stick 2/$ordner"
-    else anzeige="Ganzer $quelle"; fi
+    # Zugriff planen: Liste aus „Fotos“, „Stick 2/Bilder“, __neu__/__neu2__ (neuer Gast-Ordner), __alles__/__alles2__ (ganzer Stick).
+    # Ergebnis je Speicher: {quelle, alles, ordner: [...]}
+    local liste plan='[]' eintrag q o wurzel anzeige perms
+    liste=$(jq -c 'if (.ordner | type) == "array" then .ordner elif (.ordner // "") == "" then ["__alles__"] else [.ordner] end' <<<"$cmd")
+    [ "$(jq 'length' <<<"$liste")" -gt 0 ] || liste='["__neu__"]'
+    while IFS= read -r eintrag; do
+        q="Stick"; wurzel="$MNT"; o="$eintrag"
+        case "$o" in
+            "Stick 2/"*|__neu2__|__alles2__)
+                if ! mountpoint -q "$MNT2" 2>/dev/null; then push "Dateien: Gast nicht angelegt" "Stick 2 ist gerade nicht eingesteckt."; return; fi
+                q="Stick 2"; wurzel="$MNT2"; o=${o#Stick 2/}
+                case "$o" in __neu2__) o=__neu__ ;; __alles2__) o=__alles__ ;; esac ;;
+        esac
+        case "$o" in
+            __alles__|""|/)
+                plan=$(jq --arg q "$q" 'if any(.[]; .quelle == $q) then map(if .quelle == $q then .alles = true else . end)
+                    else . + [{quelle: $q, alles: true, ordner: []}] end' <<<"$plan")
+                continue ;;
+            __neu__) o=$(printf 'Gast-%s' "$name" | tr -d '/\\' | head -c 60); mkdir -p "$wurzel/$o" ;;
+            *) if [[ "$o" == */* || "$o" == .* || "$o" == Papierkorb || ! -d "$wurzel/$o" ]]; then
+                   push "Dateien: Gast nicht angelegt" "Der Ordner „$o“ wurde auf $q nicht gefunden."; return
+               fi ;;
+        esac
+        plan=$(jq --arg q "$q" --arg o "$o" 'if any(.[]; .quelle == $q) then map(if .quelle == $q then .ordner = (.ordner + [$o] | unique) else . end)
+            else . + [{quelle: $q, alles: false, ordner: [$o]}] end' <<<"$plan")
+    done < <(jq -r '.[]' <<<"$liste")
+    # Ganzer Stick schlägt einzelne Ordner auf demselben Stick
+    plan=$(jq 'map(if .alles then .ordner = [] else . end)' <<<"$plan")
+    # Briefkasten sieht keine Ordner, kann also nur in genau einen Ordner (bzw. einen ganzen Stick) einwerfen
+    if [ "$recht" = briefkasten ] && [ "$(jq '[.[] | if .alles then 1 else (.ordner | length) end] | add' <<<"$plan")" -gt 1 ]; then
+        push "Dateien: Gast nicht angelegt" "Ein Briefkasten-Gast kann nur einen Ordner bekommen. Bitte genau einen auswählen."; return
+    fi
+    # Anzeige: „Fotos, Stick 2/Bilder“ bzw. „Ganzer Stick“
+    anzeige=$(jq -r '[.[] | . as $e | if .alles then "Ganzer " + .quelle
+        else (.ordner[] | if $e.quelle == "Stick" then . else $e.quelle + "/" + . end) end] | join(", ")' <<<"$plan")
     case "$recht" in
-        hochladen)   perms='{"view":true,"download":true,"modify":false,"delete":false,"create":true,"configured":true}' ;;
+        laden|hochladen) recht=laden
+                     perms='{"view":true,"download":true,"modify":false,"delete":false,"create":true,"configured":true}' ;;
+        alles)       perms='{"view":true,"download":true,"modify":true,"delete":true,"create":true,"configured":true}' ;;
         briefkasten) perms='{"view":false,"download":false,"modify":false,"delete":false,"create":true,"configured":true}' ;;
-        *) recht=ansehen; perms='{"view":true,"download":true,"modify":false,"delete":false,"create":false,"configured":true}' ;;
+        *) recht=ansehen; perms='{"view":true,"download":false,"modify":false,"delete":false,"create":false,"configured":true}' ;;
     esac
     case "$modus" in
         dauerhaft) rp=false; lp=true ;;
@@ -126,21 +143,41 @@ gast_anlegen() {
         echo "[dateien] Gast anlegen fehlgeschlagen (HTTP $code)."
         push "Dateien: Gast nicht angelegt" "Der Datei-Manager hat das Anlegen abgelehnt (Fehler $code)."; return
     fi
-    code=$(fb_api "$tok" PATCH "/api/users?username=$(uri "$benutzer")" "$(jq -n --arg u "$benutzer" --arg s "$scope" \
-        --argjson perm "$perms" --argjson rp "$rp" --argjson lp "$lp" --arg q "$quelle" '{which: ["scopes","requirePasswordChange","lockPassword"],
-        data: {username: $u, requirePasswordChange: $rp, lockPassword: $lp, scopes: [{name: $q, scope: $s, permissions: $perm}]}}')")
-    if [ "$code" != 204 ] && [ "$code" != 200 ]; then
-        fb_api "$tok" DELETE "/api/users?username=$(uri "$benutzer")" >/dev/null
-        echo "[dateien] Gast-Rechte setzen fehlgeschlagen (HTTP $code), Gast wieder entfernt."
-        push "Dateien: Gast nicht angelegt" "Die Rechte konnten nicht gesetzt werden (Fehler $code). Der Gast wurde wieder entfernt."; return
+    # Speicher: ganzer Stick bzw. ein Ordner -> Startordner; mehrere Ordner -> Start „/“ plus Zugriffsregeln
+    local scopes
+    scopes=$(jq --argjson perm "$perms" 'map({name: .quelle, permissions: $perm,
+        scope: (if .alles then "/" elif (.ordner | length) == 1 then "/" + .ordner[0] else "/" end)})' <<<"$plan")
+    code=$(fb_api "$tok" PATCH "/api/users?username=$(uri "$benutzer")" "$(jq -n --arg u "$benutzer" --argjson sc "$scopes" \
+        --argjson rp "$rp" --argjson lp "$lp" '{which: ["scopes","requirePasswordChange","lockPassword"],
+        data: {username: $u, requirePasswordChange: $rp, lockPassword: $lp, scopes: $sc}}')")
+    local ok=true
+    [ "$code" = 204 ] || [ "$code" = 200 ] || ok=false
+    if [ "$ok" = true ]; then
+        while IFS=$'\t' read -r q o; do
+            [ "$(regel_setzen "$tok" "$q" "$o" "$benutzer")" = 200 ] || ok=false
+        done < <(jq -r '.[] | select((.alles | not) and (.ordner | length) > 1) | (.quelle as $q | ([$q, "/"], (.ordner[] | [$q, "/" + .])) | @tsv)' <<<"$plan")
     fi
-    # Gegenprobe: genau ein Speicher mit genau diesem Ordner, sonst Gast sofort wieder weg
-    fb_api "$tok" GET "/api/users?username=$(uri "$benutzer")" >/dev/null
-    if ! jq -e --arg q "$quelle" --arg s "$scope" '(.scopes | length) == 1 and .scopes[0].name == $q and .scopes[0].scope == $s
-            and (.permissions.admin | not) and (.permissions.share | not)' /tmp/fb_api.out >/dev/null 2>&1; then
+    # Gegenprobe: Speicher, Startordner, Rechte und Zugriffsregeln genau wie geplant – sonst Gast sofort wieder weg
+    if [ "$ok" = true ]; then
+        fb_api "$tok" GET "/api/users?username=$(uri "$benutzer")" >/dev/null
+        jq -e --argjson sc "$scopes" '([.scopes[] | {name, scope}] | sort_by(.name)) == ([$sc[] | {name, scope}] | sort_by(.name))
+            and (.permissions.admin | not) and (.permissions.share | not)
+            and all(.scopes[]; (.permissions | {view, download, modify, delete, create}) == ($sc[0].permissions | {view, download, modify, delete, create}))' \
+            /tmp/fb_api.out >/dev/null 2>&1 || ok=false
+    fi
+    if [ "$ok" = true ]; then
+        while IFS= read -r q; do
+            fb_api "$tok" GET "/api/access?source=$(uri "$q")" >/dev/null
+            jq -e --arg b "$benutzer" --argjson e "$(jq --arg q "$q" '[.[] | select(.quelle == $q) | .ordner[]] | sort' <<<"$plan")" '
+                (to_entries | map(select(.value.allow.users | index($b))) | map(.key | ltrimstr("/") | rtrimstr("/")) | sort) == $e
+                and ((.["/"].deny.users // []) | index($b)) != null' /tmp/fb_api.out >/dev/null 2>&1 || ok=false
+        done < <(jq -r '.[] | select((.alles | not) and (.ordner | length) > 1) | .quelle' <<<"$plan")
+    fi
+    if [ "$ok" != true ]; then
+        regeln_entfernen "$tok" "$benutzer"
         fb_api "$tok" DELETE "/api/users?username=$(uri "$benutzer")" >/dev/null
-        echo "[dateien] Gast-Rechte stimmen nicht, Gast wieder entfernt."
-        push "Dateien: Gast nicht angelegt" "Die Rechte ließen sich nicht sicher auf einen Ordner begrenzen. Der Gast wurde wieder entfernt."; return
+        echo "[dateien] Gast-Rechte ließen sich nicht sicher setzen (HTTP $code), Gast wieder entfernt."
+        push "Dateien: Gast nicht angelegt" "Die Rechte ließen sich nicht sicher auf die gewählten Ordner begrenzen. Der Gast wurde wieder entfernt."; return
     fi
 
     jetzt=$(date +%s)
@@ -149,7 +186,7 @@ gast_anlegen() {
         flock 9
         jq --arg n "$name" --arg b "$benutzer" --arg r "$recht" --arg o "$anzeige" --arg e "$email" \
            --argjson bis "$bis" --argjson j "$jetzt" \
-           '. + [{name: $n, benutzer: $b, recht: $r, ordner: $o, email: $e, bis: $bis, angelegt: $j, erste_anmeldung: null}]' \
+           --argjson z "$plan" '. + [{name: $n, benutzer: $b, recht: $r, ordner: $o, zugriff: $z, email: $e, bis: $bis, angelegt: $j, erste_anmeldung: null}]' \
            "$GAESTE" > "$GAESTE.neu" && mv "$GAESTE.neu" "$GAESTE"
     ) 9>"$LOCK"
     gaeste_melden
@@ -158,8 +195,9 @@ gast_anlegen() {
     logbuch "Gast $name ($benutzer) angelegt: $recht, Ordner $anzeige, $([ "$tage" -gt 0 ] && echo "$tage Tage" || echo unbegrenzt)"
 
     case "$recht" in
-        ansehen) hinweis="nur ansehen und herunterladen" ;;
-        hochladen) hinweis="ansehen, herunterladen und hochladen" ;;
+        ansehen) hinweis="nur ansehen (Vorschau), kein Herunterladen" ;;
+        laden) hinweis="ansehen, herunterladen und hochladen" ;;
+        alles) hinweis="alles: ansehen, herunter-/hochladen, umbenennen, Ordner anlegen, löschen (in den Papierkorb)" ;;
         briefkasten) hinweis="Briefkasten: nur einwerfen (Menü > Datei-Aktionen > Hochladen), nichts sehen" ;;
     esac
     local gueltig="unbegrenzt"
@@ -197,6 +235,7 @@ gast_entfernen() {
     [ -n "$eintrag" ] || { echo "[dateien] Gast „$benutzer“ unbekannt."; return; }
     name=$(jq -r .name <<<"$eintrag"); email=$(jq -r .email <<<"$eintrag")
     tok=$(admin_token)
+    regeln_entfernen "$tok" "$benutzer"
     code=$(fb_api "$tok" DELETE "/api/users?username=$(uri "$benutzer")")
     if [ "$code" != 200 ] && [ "$code" != 204 ] && [ "$code" != 404 ]; then
         echo "[dateien] Gast löschen fehlgeschlagen (HTTP $code)."
@@ -277,4 +316,22 @@ admin_quellen() {
     code=$(fb_api "$tok" PATCH "/api/users?username=$(uri "$USER_NAME")" "$(jq -n --arg u "$USER_NAME" --argjson s "$scopes" \
         '{which: ["scopes"], data: {username: $u, scopes: $s}}')")
     echo "[dateien] Speicher für den Hauptbenutzer gesetzt (HTTP $code)."
+}
+
+# Zugriffsregel für einen Gast: „/“ wird gesperrt, jeder freigegebene Ordner erlaubt -> HTTP-Status
+regel_setzen() {
+    local tok=$1 quelle=$2 pfad=$3 benutzer=$4 erlaubt=true
+    [ "$pfad" = / ] && erlaubt=false
+    fb_api "$tok" POST "/api/access?source=$(uri "$quelle")&path=$(uri "$pfad")" \
+        "$(jq -n --arg b "$benutzer" --argjson a "$erlaubt" '{allow: $a, ruleCategory: "user", value: $b}')"
+}
+
+# Alle Zugriffsregeln eines Gastes auf allen Sticks entfernen (beim Löschen und wenn das Anlegen scheitert)
+regeln_entfernen() {
+    local tok=$1 benutzer=$2 q t
+    while IFS= read -r q; do
+        for t in deny allow; do
+            fb_api "$tok" DELETE "/api/access?source=$(uri "$q")&path=%2F&ruleType=$t&ruleCategory=user&value=$(uri "$benutzer")&cascade=true" >/dev/null
+        done
+    done < <(jq -r '.[].name' "$QUELLEN")
 }
