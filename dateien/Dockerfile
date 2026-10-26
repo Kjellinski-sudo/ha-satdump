@@ -26,7 +26,7 @@ RUN rsvg-convert -w 512 -h 512 -b "#070b12" /opt/dateien/logo.svg -o /opt/dateie
 
 # Papierkorb-Weiche: nginx vor Quantum, „Löschen“ wird zu „in den Papierkorb verschieben“
 COPY nginx.conf /etc/dateien-nginx.conf
-COPY papierkorb_weiche.py /opt/dateien/
+COPY papierkorb_weiche.py papierkorb.js /opt/dateien/
 RUN nginx -t -c /etc/dateien-nginx.conf && python3 -m py_compile /opt/dateien/papierkorb_weiche.py
 
 COPY run.sh gaeste.sh aktivitaet.sh /

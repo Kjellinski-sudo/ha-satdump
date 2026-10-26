@@ -55,6 +55,35 @@ def herkunft_merken(name_im_korb, pfad):
         os.replace(HERKUNFT + ".neu", HERKUNFT)
 
 
+def herkunft_lesen():
+    try:
+        with open(HERKUNFT, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def herkunft_vergessen(name_im_korb):
+    with open(SPERRE, "a") as sperre:
+        if fcntl:
+            fcntl.flock(sperre, fcntl.LOCK_EX)
+        daten = herkunft_lesen()
+        daten.pop(name_im_korb, None)
+        with open(HERKUNFT + ".neu", "w", encoding="utf-8") as f:
+            json.dump(daten, f, ensure_ascii=False)
+        os.replace(HERKUNFT + ".neu", HERKUNFT)
+
+
+def freies_ziel(ordner, name):
+    """Freier Name im Zielordner (Stick-Pfad), bei Gleichstand „name (1).ext“."""
+    stamm, endung = os.path.splitext(name) if not name.startswith(".") else (name, "")
+    kandidat, n = name, 0
+    while os.path.lexists(os.path.join(STICK, ordner.strip("/"), kandidat)):
+        n += 1
+        kandidat = f"{stamm} ({n}){endung}"
+    return kandidat
+
+
 def im_korb(pfad):
     p = "/" + pfad.strip("/")
     return p == KORB or p.startswith(KORB + "/")
@@ -111,6 +140,52 @@ class Weiche(BaseHTTPRequestHandler):
             else:
                 fehler.append({"source": source, "path": pfad, "message": f"Verschieben in den Papierkorb nicht erlaubt ({status})"})
         return ok, fehler
+
+    def do_POST(self):
+        """Wiederherstellen aus dem Papierkorb (Menüpunkt im Datei-Manager), mit den Rechten des Benutzers."""
+        if urlsplit(self.path).path != "/dateien-api/wiederherstellen":
+            return self._senden(404, {"status": 404, "message": "nicht gefunden"})
+        laenge = int(self.headers.get("Content-Length") or 0)
+        try:
+            namen = json.loads(self.rfile.read(laenge) if laenge else b"{}").get("namen") or []
+            assert isinstance(namen, list) and len(namen) <= 200
+        except (ValueError, AssertionError, AttributeError):
+            return self._senden(400, {"status": 400, "message": "ungültige Anfrage"})
+        # Angemeldet? (Quantum prüft das Token/Cookie)
+        status, _, _ = self._quantum("GET", "/api/users?username=self")
+        if status != 200:
+            return self._senden(401, {"status": 401, "message": "nicht angemeldet"})
+        herkunft = herkunft_lesen()
+        ok, fehler = [], []
+        for name in namen:
+            if not isinstance(name, str) or not name or "/" in name or name in (".", ".."):
+                fehler.append({"name": str(name), "grund": "ungültiger Name"})
+                continue
+            if not os.path.lexists(os.path.join(STICK, KORB.strip("/"), name)):
+                fehler.append({"name": name, "grund": "liegt nicht im Papierkorb"})
+                continue
+            alt = (herkunft.get(name) or {}).get("pfad") or "/" + name
+            ordner = posixpath.dirname("/" + alt.strip("/")) or "/"
+            if ".." in ordner.split("/") or im_korb(ordner):
+                ordner = "/"
+            os.makedirs(os.path.join(STICK, ordner.strip("/")), exist_ok=True)
+            ziel = posixpath.join(ordner, freies_ziel(ordner, posixpath.basename(alt.rstrip("/")) or name))
+            anfrage = {"action": "move", "rename": False, "overwrite": False, "items": [
+                {"fromSource": "Stick", "fromPath": f"{KORB}/{name}", "toSource": "Stick", "toPath": ziel}]}
+            st, antwort, _ = self._quantum("PATCH", "/api/resources", json.dumps(anfrage).encode())
+            try:
+                misslungen = bool(json.loads(antwort or b"{}").get("failed"))
+            except ValueError:
+                misslungen = False
+            if st in (200, 204) and not misslungen:
+                ok.append({"name": name, "ziel": ziel})
+                try:
+                    herkunft_vergessen(name)
+                except OSError:
+                    pass
+            else:
+                fehler.append({"name": name, "grund": f"nicht erlaubt ({st})"})
+        return self._senden(200 if not fehler else 207, {"wiederhergestellt": ok, "fehler": fehler})
 
     def do_DELETE(self):
         url = urlsplit(self.path)

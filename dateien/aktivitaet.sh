@@ -72,6 +72,7 @@ aktivitaet_pruefen() {
                          jq -e --arg b "$benutzer" 'any(.[]; .benutzer == $b)' "$GAESTE" >/dev/null 2>&1 && gast_hoch[$benutzer]=$(( ${gast_hoch[$benutzer]:-0} + 1 )) ;;
             download)    logbuch "$benutzer hat „$was“ heruntergeladen"; woche_zaehlen heruntergeladen "$n" ;;
             move|rename) if [[ "$ziel" == "$PAPIERKORB_DIR"/* ]]; then logbuch "$benutzer hat „$was“ in den Papierkorb gelegt"
+                         elif [[ "$was" == "$PAPIERKORB_DIR"/* ]]; then logbuch "$benutzer hat „${was#"$PAPIERKORB_DIR"/}“ aus dem Papierkorb wiederhergestellt nach „$ziel“"
                          else logbuch "$benutzer hat „$was“ nach „$ziel“ verschoben/umbenannt"; fi
                          woche_zaehlen verschoben ;;
             copy)        logbuch "$benutzer hat „$was“ nach „$ziel“ kopiert" ;;

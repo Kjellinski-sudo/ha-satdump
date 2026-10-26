@@ -258,6 +258,6 @@ wiederherstellen() {
         flock 9
         jq --arg n "$name" 'del(.[$n])' "$herkunft" > "$herkunft.neu" 2>/dev/null && mv "$herkunft.neu" "$herkunft"
     ) 9>"$LOCK"
-    logbuch "„$name“ aus dem Papierkorb wiederhergestellt nach „${ordner%/}/$ziel“"
+    # Logbuch-Eintrag kommt aus dem Aktivitätsprotokoll (Verschieben aus dem Papierkorb)
     papierkorb_pruefen
 }
