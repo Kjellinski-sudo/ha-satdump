@@ -153,8 +153,23 @@ ha_post() {
 . /aktivitaet.sh
 
 # Alle Werte an Home Assistant (alle 5 Min. und auf Zuruf, z. B. nach einem HA-Neustart)
+# Steckt der Stick noch und ist lesbar? (Gerät vorhanden, eingebunden, Verzeichnis lesbar)
+stick_ok() {
+    local dev=$1 mnt=$2
+    [ -n "$dev" ] && [ -b "$dev" ] && mountpoint -q "$mnt" && timeout 5 ls "$mnt" >/dev/null 2>&1
+}
+
+sticks_melden() {
+    local ok1=off ok2=off
+    stick_ok "$DEV1" "$MNT" && ok1=on
+    if [ "$STICK2" = true ]; then stick_ok "$DEV2" "$MNT2" && ok2=on; fi
+    ha_post states/binary_sensor.dateien_stick_ok "$(jq -n --arg s "$ok1" --arg l "$LABEL" '{state: $s, attributes: {friendly_name: "Dateien: Stick eingesteckt", device_class: "plug", icon: "mdi:usb-flash-drive", name_auf_stick: $l}}')"
+    ha_post states/binary_sensor.dateien_stick2_ok "$(jq -n --arg s "$ok2" --argjson z "$STICK2" '{state: $s, attributes: {friendly_name: "Dateien: Stick 2 eingesteckt", device_class: "plug", icon: "mdi:usb-flash-drive", beim_start_gefunden: $z}}')"
+}
+
 alles_melden() {
     local pfad sensor titel total used avail
+    sticks_melden
     while IFS=$'\t' read -r pfad sensor titel; do
         read -r total used avail <<<"$(df -B1 --output=size,used,avail "$pfad" | tail -1)"
         if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then
@@ -178,7 +193,9 @@ belegung() {
         gaeste_ablauf_pruefen
         quantum_update_pruefen
         alles_melden
-        sleep 300
+        # Sticks öfter prüfen (jede Minute), damit ein abgezogener Stick schnell auffällt
+        for _ in 1 2 3 4; do sleep 60; sticks_melden; done
+        sleep 60
     done
 }
 belegung &
