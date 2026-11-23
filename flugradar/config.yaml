@@ -1,0 +1,33 @@
+name: Flugradar (ADS-B)
+version: "0.1.0"
+slug: flugradar
+description: Empfängt mit dem RTL-SDR-Stick die ADS-B-Signale (1090 MHz) der Flugzeuge in der Umgebung (readsb + tar1090-Karte) und meldet sie an Home Assistant.
+url: https://github.com/Kjellinski-sudo/ha-satdump
+arch:
+  - aarch64
+  - amd64
+startup: application
+boot: auto
+init: false
+usb: true
+homeassistant_api: true
+ingress: true
+ingress_port: 80
+panel_icon: mdi:airplane
+panel_title: Flugradar
+# Karte zusätzlich im Heimnetz (fürs Wanddisplay/iPhone XR): http://<HA-IP>:8090
+ports:
+  80/tcp: 8090
+ports_description:
+  80/tcp: tar1090-Karte (nur Heimnetz)
+watchdog: "http://[HOST]:[PORT:80]/data/receiver.json"
+options:
+  gain: autogain
+  ppm: 0
+  umkreis_km: 10
+  tief_m: 600
+schema:
+  gain: str
+  ppm: int
+  umkreis_km: int(1,100)
+  tief_m: int(100,3000)

@@ -22,3 +22,6 @@ Datei-Manager nur für den USB-Stick (Name „ESD-USB“) am Home-Assistant-Pi, 
 - Kein offener Port: erreichbar nur über den Cloudflare-Tunnel (intern `http://1791b5d0-dateien:8080`), davor Cloudflare Access.
 - Benutzername und Passwort (mind. 12 Zeichen) in der App-Konfiguration eintragen; ohne startet die App nicht.
 - Keine Selbstregistrierung, Teilen-Links für neue Benutzer aus. Meldet Stick-Belegung und Anmeldungen (erfolgreich/fehlgeschlagen) an Home Assistant.
+
+## Flugradar (ADS-B)
+readsb + tar1090 mit RTL-SDR-Stick, Sensoren und Ereignisse für Home Assistant. Siehe `flugradar/README.md`.
