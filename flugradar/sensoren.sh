@@ -20,11 +20,12 @@ while true; do
            squawk: (.squawk // ""), mil: (((.dbFlags // 0) % 2) == 1)}]
       | sort_by(.km) as $a
       | {anzahl: ($a|length), nah: [$a[] | select(.km <= $um)], liste: $a[0:8],
-         besonders: [$a[] | select((.boden|not) and (
+         besonders: [$a[] | select(((.squawk=="7500") or (.squawk=="7600") or (.squawk=="7700")) or ((.boden|not) and (
              ((.cs|test("^CHX")) or .squawk=="0020") or
              (.mil and .km <= 30) or
-             (.hoehe_m > 0 and .hoehe_m < $tief and .km <= 3)))
-           | . + {grund: (if ((.cs|test("^CHX")) or .squawk=="0020") then "rettung"
+             (.hoehe_m > 0 and .hoehe_m < $tief and .km <= 3))))
+           | . + {grund: (if (.squawk=="7500" or .squawk=="7600" or .squawk=="7700") then "notfall"
+                          elif ((.cs|test("^CHX")) or .squawk=="0020") then "rettung"
                           elif .mil then "militaer" else "tief" end)}]}' "$F" 2>/dev/null)
     if [ -n "$J" ]; then
       ANZ=$(echo "$J" | jq '.anzahl'); NAH=$(echo "$J" | jq '.nah|length')

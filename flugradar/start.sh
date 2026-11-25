@@ -25,4 +25,5 @@ export TZ="${TZ:-Europe/Berlin}"
 echo "Flugradar: Standort $( [ -n "$LAT" ] && echo gesetzt || echo FEHLT ), Gain $GAIN"
 /sensoren.sh &
 python3 /flugwetter.py &
+python3 /extras.py &
 exec /init

@@ -12,3 +12,6 @@ Der Stick wird exklusiv belegt: nicht gleichzeitig mit der SatDump-App betreiben
 
 ## Flugwetter (ab 0.2.0)
 Aus den Mode-S-Meldungen (Wind, Aussentemperatur) der letzten 60 Minuten: `sensor.flugwetter_frostgrenze`, `sensor.flugwetter_jetstream`, `sensor.flugwetter_temperatur_reiseflug`, `sensor.flugwetter_profil` (Hoehenbaender als Attribut). Ist-Zustand, keine Vorhersage.
+
+## Extras (ab 0.3.0)
+Notfall-Squawk 7500/7600/7700 (Ereignis grund=notfall), `sensor.flugradar_naechster_details` (Airline/Route/Foto via adsbdb.com), `sensor.flugradar_heute` (Statistik, Sammelalbum, Rekorde; Ereignis `flugradar_fang`), `sensor.flugwetter_kondensstreifen`, `sensor.iss_naechster_sichtbarer_ueberflug` (skyfield), `sensor.pollen_heute`, `sensor.uv_index_heute` (Open-Meteo/CAMS).
