@@ -9,3 +9,6 @@ Sensoren: `sensor.flugradar_flugzeuge`, `sensor.flugradar_ueber_mir`, `sensor.fl
 Ereignis `flugradar_besonders` (grund: rettung | militaer | tief), je Flieger max. stündlich.
 
 Der Stick wird exklusiv belegt: nicht gleichzeitig mit der SatDump-App betreiben.
+
+## Flugwetter (ab 0.2.0)
+Aus den Mode-S-Meldungen (Wind, Aussentemperatur) der letzten 60 Minuten: `sensor.flugwetter_frostgrenze`, `sensor.flugwetter_jetstream`, `sensor.flugwetter_temperatur_reiseflug`, `sensor.flugwetter_profil` (Hoehenbaender als Attribut). Ist-Zustand, keine Vorhersage.

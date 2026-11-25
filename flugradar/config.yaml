@@ -1,5 +1,5 @@
 name: Flugradar (ADS-B)
-version: "0.1.0"
+version: "0.2.0"
 slug: flugradar
 description: Empfängt mit dem RTL-SDR-Stick die ADS-B-Signale (1090 MHz) der Flugzeuge in der Umgebung (readsb + tar1090-Karte) und meldet sie an Home Assistant.
 url: https://github.com/Kjellinski-sudo/ha-satdump
